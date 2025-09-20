@@ -271,3 +271,4 @@ src/HRSDataIntegration.Blazor.Server.Tiered/Logs/*
 # IdentityServer temp files
 tempkey.rsa
 tempkey.jwkLogs/
+Logs/
