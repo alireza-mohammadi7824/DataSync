@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Monitoring.HealthChecks;
+using Volo.Abp.Authorization;
 using Volo.Abp.AutoMapper;
 using Volo.Abp.Modularity;
 
@@ -7,6 +8,7 @@ namespace Monitoring;
 
 [DependsOn(
     typeof(MonitoringDomainModule),
+    typeof(AbpAuthorizationModule),
     typeof(MonitoringApplicationContractsModule),
     typeof(AbpAutoMapperModule)
     )]
