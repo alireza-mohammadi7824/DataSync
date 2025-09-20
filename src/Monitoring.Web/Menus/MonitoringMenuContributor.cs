@@ -15,13 +15,13 @@ public class MonitoringMenuContributor : IMenuContributor
         }
 
         var monitoringMenu = new ApplicationMenuItem(
-            MonitoringMenus.MonitoringTasks,
+            MonitoringMenus.MonitoringTargets,
             displayName: "Monitoring",
-            url: "/Monitoring/Tasks",
+            url: "/Monitoring/Targets",
             icon: "fa fa-chart-line"
         );
 
-        if (await context.IsGrantedAsync(MonitoringPermissions.View))
+        if (await context.IsGrantedAsync(MonitoringPermissions.Services.View))
         {
             context.Menu.AddItem(monitoringMenu);
         }

@@ -3,14 +3,14 @@ using System.Threading.Tasks;
 using Volo.Abp.Application.Dtos;
 using Volo.Abp.Application.Services;
 
-namespace Monitoring.Tasks;
+namespace Monitoring.Targets;
 
-public interface IMonitoringTaskAppService :
+public interface IMonitoringTargetAppService :
     ICrudAppService<
-        MonitoringTaskDto,
+        MonitoringTargetDto,
         Guid,
         PagedAndSortedResultRequestDto,
-        CreateUpdateMonitoringTaskDto>
+        CreateUpdateMonitoringTargetDto>
 {
-    Task TriggerExecutionAsync(Guid id);
+    Task TriggerCheckAsync(Guid id);
 }

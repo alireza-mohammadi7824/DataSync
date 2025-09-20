@@ -4,9 +4,13 @@ public static class MonitoringPermissions
 {
     public const string GroupName = "Monitoring";
 
-    public const string View = GroupName + ".View";
-    public const string Create = GroupName + ".Create";
-    public const string Edit = GroupName + ".Edit";
-    public const string Delete = GroupName + ".Delete";
-    public const string Run = GroupName + ".Run";
+    public static class Services
+    {
+        public const string Default = GroupName + ".Services";
+        public const string View = GroupName + ".Services.View";
+        public const string Create = GroupName + ".Services.Create";
+        public const string Edit = GroupName + ".Services.Edit";
+        public const string Delete = GroupName + ".Services.Delete";
+        public const string Run = GroupName + ".Services.Run";
+    }
 }

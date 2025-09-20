@@ -15,7 +15,7 @@ using Volo.Abp.OpenIddict.EntityFrameworkCore;
 using Volo.Abp.TenantManagement;
 using Volo.Abp.TenantManagement.EntityFrameworkCore;
 using Monitoring;
-using Monitoring.Tasks;
+using Monitoring.Targets;
 using HRSDataIntegration.DTOs.Chart;
 using HRSDataIntegration.DTOs.Personeli;
 using HRSDataIntegration.DTOs;
@@ -63,7 +63,7 @@ public class HRSDataIntegrationDbContext :
     public DbSet<TenantConnectionString> TenantConnectionStrings { get; set; }
 
     #region Monitoring
-    public DbSet<MonitoringTask> MonitoringTasks { get; set; }
+    public DbSet<MonitoringTarget> MonitoringTargets { get; set; }
     #endregion Monitoring
     #region Job
     public DbSet<Job> Job { get; set; }
@@ -217,14 +217,18 @@ public class HRSDataIntegrationDbContext :
         builder.Entity<OrganizationChartNodeDiagramPointArray>()
         .ToTable("OrganizationChartNodeDiagramPointArray", schema: "OrganChart");
 
-        builder.Entity<MonitoringTask>(b =>
+        builder.Entity<MonitoringTarget>(b =>
         {
-            b.ToTable(MonitoringConsts.DbTablePrefix + "Tasks", MonitoringConsts.DbSchema);
+            b.ToTable(MonitoringConsts.DbTablePrefix + "Targets", MonitoringConsts.DbSchema);
             b.ConfigureByConvention();
-            b.Property(x => x.Name).IsRequired().HasMaxLength(MonitoringTaskConsts.NameMaxLength);
-            b.Property(x => x.TargetUrl).IsRequired().HasMaxLength(MonitoringTaskConsts.TargetUrlMaxLength);
-            b.Property(x => x.AuthenticationSecretRef).HasMaxLength(MonitoringTaskConsts.SecretReferenceMaxLength);
+            b.Property(x => x.Name).IsRequired().HasMaxLength(MonitoringTargetConsts.NameMaxLength);
+            b.Property(x => x.Type).HasConversion<int>();
+            b.Property(x => x.Endpoint).IsRequired().HasMaxLength(MonitoringTargetConsts.EndpointMaxLength);
+            b.Property(x => x.SettingsJson).HasMaxLength(MonitoringTargetConsts.SettingsJsonMaxLength);
+            b.Property(x => x.Category).HasMaxLength(MonitoringTargetConsts.CategoryMaxLength);
+            b.Property(x => x.CurrentStatus).HasConversion<int>();
             b.HasIndex(x => x.IsActive);
+            b.HasQueryFilter(x => !x.IsDeleted);
         });
 
 

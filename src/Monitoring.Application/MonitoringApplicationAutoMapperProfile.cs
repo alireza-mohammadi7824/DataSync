@@ -1,5 +1,5 @@
 using AutoMapper;
-using Monitoring.Tasks;
+using Monitoring.Targets;
 
 namespace Monitoring;
 
@@ -7,6 +7,6 @@ public class MonitoringApplicationAutoMapperProfile : Profile
 {
     public MonitoringApplicationAutoMapperProfile()
     {
-        CreateMap<MonitoringTask, MonitoringTaskDto>();
+        CreateMap<MonitoringTarget, MonitoringTargetDto>();
     }
 }
