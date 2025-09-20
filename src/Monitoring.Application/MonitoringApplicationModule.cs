@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+using Monitoring.HealthChecks;
 using Volo.Abp.AutoMapper;
 using Volo.Abp.Modularity;
 
@@ -12,6 +14,12 @@ public class MonitoringApplicationModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
+        context.Services.AddTransient<WebsiteCheckProvider>();
+        context.Services.AddTransient<ApiCheckProvider>();
+        context.Services.AddTransient<TcpCheckProvider>();
+        context.Services.AddTransient<RedisCheckProvider>();
+        context.Services.AddTransient<IHealthCheckProviderResolver, HealthCheckProviderResolver>();
+
         Configure<AbpAutoMapperOptions>(options =>
         {
             options.AddMaps<MonitoringApplicationModule>();
