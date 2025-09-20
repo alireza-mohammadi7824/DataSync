@@ -14,6 +14,8 @@ using Volo.Abp.SettingManagement.EntityFrameworkCore;
 using Volo.Abp.OpenIddict.EntityFrameworkCore;
 using Volo.Abp.TenantManagement;
 using Volo.Abp.TenantManagement.EntityFrameworkCore;
+using Monitoring;
+using Monitoring.Tasks;
 using HRSDataIntegration.DTOs.Chart;
 using HRSDataIntegration.DTOs.Personeli;
 using HRSDataIntegration.DTOs;
@@ -59,6 +61,10 @@ public class HRSDataIntegrationDbContext :
     // Tenant Management
     public DbSet<Tenant> Tenants { get; set; }
     public DbSet<TenantConnectionString> TenantConnectionStrings { get; set; }
+
+    #region Monitoring
+    public DbSet<MonitoringTask> MonitoringTasks { get; set; }
+    #endregion Monitoring
     #region Job
     public DbSet<Job> Job { get; set; }
     public DbSet<JobDetail> JobDetail { get; set; }
@@ -210,6 +216,16 @@ public class HRSDataIntegrationDbContext :
         .ToTable("OrganizationChartNodeDiagram", schema: "OrganChart");
         builder.Entity<OrganizationChartNodeDiagramPointArray>()
         .ToTable("OrganizationChartNodeDiagramPointArray", schema: "OrganChart");
+
+        builder.Entity<MonitoringTask>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "Tasks", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.Name).IsRequired().HasMaxLength(MonitoringTaskConsts.NameMaxLength);
+            b.Property(x => x.TargetUrl).IsRequired().HasMaxLength(MonitoringTaskConsts.TargetUrlMaxLength);
+            b.Property(x => x.AuthenticationSecretRef).HasMaxLength(MonitoringTaskConsts.SecretReferenceMaxLength);
+            b.HasIndex(x => x.IsActive);
+        });
 
 
 
