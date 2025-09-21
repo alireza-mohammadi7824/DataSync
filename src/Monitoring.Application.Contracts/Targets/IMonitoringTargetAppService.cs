@@ -21,6 +21,8 @@ public interface IMonitoringTargetAppService :
 
     Task<int> CheckAllNowAsync();
 
+    Task<List<MonitoringTargetDto>> GetOverviewAsync(ServiceType? type = null);
+
     Task<List<OutageWindowDto>> GetRecentOutagesAsync(Guid targetId, int count = 10);
 
     Task<List<ServiceStatusHistoryDto>> GetRecentStatusHistoryAsync(Guid targetId, int count = 20);

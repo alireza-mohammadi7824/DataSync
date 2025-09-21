@@ -23,6 +23,13 @@ public class MonitoringTargetController : MonitoringController
     }
 
     [HttpGet]
+    [Route("overview")]
+    public virtual Task<List<MonitoringTargetDto>> GetOverviewAsync([FromQuery] ServiceType? type)
+    {
+        return _monitoringTargetAppService.GetOverviewAsync(type);
+    }
+
+    [HttpGet]
     public virtual Task<PagedResultDto<MonitoringTargetDto>> GetListAsync(PagedAndSortedResultRequestDto input)
     {
         return _monitoringTargetAppService.GetListAsync(input);

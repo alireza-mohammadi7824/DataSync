@@ -14,7 +14,7 @@ public static class MonitoringHistoryConsts
 
     public static void ValidateErrorSummary(string? errorSummary)
     {
-        if (!errorSummary.IsNullOrWhiteSpace())
+        if (!string.IsNullOrWhiteSpace(errorSummary))
         {
             Check.Length(errorSummary, nameof(errorSummary), ErrorSummaryMaxLength, 0);
         }

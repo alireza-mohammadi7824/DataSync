@@ -168,6 +168,24 @@ public class MonitoringTargetAppService :
         return targets.Count;
     }
 
+    public async Task<List<MonitoringTargetDto>> GetOverviewAsync(ServiceType? type = null)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
+
+        var queryable = await Repository.GetQueryableAsync();
+
+        if (type.HasValue)
+        {
+            queryable = queryable.Where(target => target.Type == type.Value);
+        }
+
+        var targets = await AsyncExecuter.ToListAsync(
+            queryable
+                .OrderBy(target => target.Name));
+
+        return ObjectMapper.Map<List<MonitoringTarget>, List<MonitoringTargetDto>>(targets);
+    }
+
     public async Task<List<OutageWindowDto>> GetRecentOutagesAsync(Guid targetId, int count = 10)
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
