@@ -116,6 +116,125 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
             b.ToTable("MonitoringTargets", (string)null);
         });
 
+        modelBuilder.Entity("Monitoring.Targets.AlertPolicy", b =>
+        {
+            b.Property<Guid>("Id")
+                .HasColumnType("uniqueidentifier");
+
+            b.Property<string>("ChannelsJson")
+                .HasMaxLength(4000)
+                .HasColumnType("nvarchar(4000)");
+
+            b.Property<string>("ConcurrencyStamp")
+                .HasColumnType("nvarchar(40)")
+                .HasMaxLength(40);
+
+            b.Property<DateTime>("CreationTime")
+                .HasColumnType("datetime2");
+
+            b.Property<Guid?>("CreatorId")
+                .HasColumnType("uniqueidentifier");
+
+            b.Property<Guid?>("DeleterId")
+                .HasColumnType("uniqueidentifier");
+
+            b.Property<DateTime?>("DeletionTime")
+                .HasColumnType("datetime2");
+
+            b.Property<bool>("Enabled")
+                .HasColumnType("bit");
+
+            b.Property<string>("ExtraProperties")
+                .HasColumnType("nvarchar(max)");
+
+            b.Property<bool>("IsDeleted")
+                .HasColumnType("bit")
+                .HasDefaultValue(false);
+
+            b.Property<DateTime?>("LastModificationTime")
+                .HasColumnType("datetime2");
+
+            b.Property<Guid?>("LastModifierId")
+                .HasColumnType("uniqueidentifier");
+
+            b.Property<int>("NotifyAfterFailures")
+                .HasColumnType("int");
+
+            b.Property<int>("RecoverQuietMinutes")
+                .HasColumnType("int");
+
+            b.Property<int>("RepeatMinutes")
+                .HasColumnType("int");
+
+            b.Property<bool>("SuppressDuringMaintenance")
+                .HasColumnType("bit");
+
+            b.Property<Guid>("TargetId")
+                .HasColumnType("uniqueidentifier");
+
+            b.HasKey("Id");
+
+            b.HasIndex("TargetId")
+                .IsUnique();
+
+            b.ToTable("MonitoringAlertPolicies", (string)null);
+        });
+
+        modelBuilder.Entity("Monitoring.Targets.MaintenanceWindow", b =>
+        {
+            b.Property<Guid>("Id")
+                .HasColumnType("uniqueidentifier");
+
+            b.Property<string>("ConcurrencyStamp")
+                .HasColumnType("nvarchar(40)")
+                .HasMaxLength(40);
+
+            b.Property<DateTime>("CreationTime")
+                .HasColumnType("datetime2");
+
+            b.Property<Guid?>("CreatorId")
+                .HasColumnType("uniqueidentifier");
+
+            b.Property<Guid?>("DeleterId")
+                .HasColumnType("uniqueidentifier");
+
+            b.Property<DateTime?>("DeletionTime")
+                .HasColumnType("datetime2");
+
+            b.Property<DateTime>("EndUtc")
+                .HasColumnType("datetime2");
+
+            b.Property<string>("ExtraProperties")
+                .HasColumnType("nvarchar(max)");
+
+            b.Property<bool>("IsDeleted")
+                .HasColumnType("bit")
+                .HasDefaultValue(false);
+
+            b.Property<DateTime?>("LastModificationTime")
+                .HasColumnType("datetime2");
+
+            b.Property<Guid?>("LastModifierId")
+                .HasColumnType("uniqueidentifier");
+
+            b.Property<string>("Reason")
+                .HasMaxLength(256)
+                .HasColumnType("nvarchar(256)");
+
+            b.Property<DateTime>("StartUtc")
+                .HasColumnType("datetime2");
+
+            b.Property<Guid?>("TargetId")
+                .HasColumnType("uniqueidentifier");
+
+            b.HasKey("Id");
+
+            b.HasIndex("TargetId", "StartUtc", "EndUtc")
+                .HasDatabaseName("IX_Target_Start_End");
+
+            b.ToTable("MonitoringMaintenance", (string)null);
+        });
+
         modelBuilder.Entity("Monitoring.Targets.OutageWindow", b =>
         {
             b.Property<Guid>("Id")
@@ -193,6 +312,23 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
                 .HasForeignKey("TargetId")
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired();
+        });
+
+        modelBuilder.Entity("Monitoring.Targets.AlertPolicy", b =>
+        {
+            b.HasOne("Monitoring.Targets.MonitoringTarget", null)
+                .WithOne()
+                .HasForeignKey("Monitoring.Targets.AlertPolicy", "TargetId")
+                .OnDelete(DeleteBehavior.Cascade)
+                .IsRequired();
+        });
+
+        modelBuilder.Entity("Monitoring.Targets.MaintenanceWindow", b =>
+        {
+            b.HasOne("Monitoring.Targets.MonitoringTarget", null)
+                .WithMany()
+                .HasForeignKey("TargetId")
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 }

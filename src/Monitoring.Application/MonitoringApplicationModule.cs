@@ -1,6 +1,8 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Monitoring.HealthChecks;
+using Monitoring.Options;
 using Monitoring.Workers;
 using Volo.Abp;
 using Volo.Abp.AutoMapper;
@@ -29,6 +31,9 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddTransient<RedisCheckProvider>();
         context.Services.AddTransient<IHealthCheckProviderResolver, HealthCheckProviderResolver>();
         context.Services.AddHostedService<MonitoringWorker>();
+
+        var configuration = context.Services.GetConfiguration();
+        Configure<MonitoringOptions>(configuration.GetSection("Monitoring"));
 
         Configure<AbpAutoMapperOptions>(options =>
         {

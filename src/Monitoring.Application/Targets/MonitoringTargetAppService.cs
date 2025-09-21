@@ -6,12 +6,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Monitoring.HealthChecks;
+using Monitoring.Options;
 using Monitoring.Permissions;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Authorization;
+using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Guids;
 
@@ -27,24 +30,40 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly JsonSerializerOptions AlertChannelsSerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DictionaryKeyPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+
     private readonly IRepository<MonitoringTarget, Guid> _repository;
     private readonly IHealthCheckProviderResolver _providerResolver;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
+    private readonly IRepository<AlertPolicy, Guid> _alertPolicyRepository;
+    private readonly IRepository<MaintenanceWindow, Guid> _maintenanceRepository;
     private readonly IGuidGenerator _guidGenerator;
+    private readonly MonitoringOptions _options;
 
     public MonitoringTargetAppService(
         IRepository<MonitoringTarget, Guid> repository,
         IHealthCheckProviderResolver providerResolver,
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
-        IGuidGenerator guidGenerator)
+        IRepository<AlertPolicy, Guid> alertPolicyRepository,
+        IRepository<MaintenanceWindow, Guid> maintenanceRepository,
+        IGuidGenerator guidGenerator,
+        IOptions<MonitoringOptions> options)
     {
         _repository = repository;
         _providerResolver = providerResolver;
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
+        _alertPolicyRepository = alertPolicyRepository;
+        _maintenanceRepository = maintenanceRepository;
         _guidGenerator = guidGenerator;
+        _options = options.Value;
     }
 
     public async Task<PagedResultDto<MonitoringTargetDto>> GetListAsync(
@@ -285,6 +304,143 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         return ObjectMapper.Map<List<ServiceStatusHistory>, List<ServiceStatusHistoryDto>>(history);
     }
 
+    public async Task<AlertPolicyDto> GetAlertPolicyAsync(Guid targetId)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
+
+        await EnsureTargetExistsAsync(targetId);
+
+        var policy = await _alertPolicyRepository.FirstOrDefaultAsync(x => x.TargetId == targetId);
+        if (policy == null)
+        {
+            var defaults = _options.AlertDefaults;
+            return new AlertPolicyDto
+            {
+                TargetId = targetId,
+                Enabled = defaults.Enabled,
+                NotifyAfterFailures = defaults.NotifyAfterFailures,
+                RepeatMinutes = defaults.RepeatMinutes,
+                RecoverQuietMinutes = defaults.RecoverQuietMinutes,
+                ChannelsJson = SerializeDefaultChannels(defaults.DefaultChannels),
+                SuppressDuringMaintenance = defaults.SuppressDuringMaintenance,
+                IsInherited = true
+            };
+        }
+
+        var dto = ObjectMapper.Map<AlertPolicy, AlertPolicyDto>(policy);
+        dto.IsInherited = false;
+        return dto;
+    }
+
+    public async Task<AlertPolicyDto> UpsertAlertPolicyAsync(Guid targetId, AlertPolicyDto input)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Edit);
+
+        if (input == null)
+        {
+            throw new ArgumentNullException(nameof(input));
+        }
+
+        await EnsureTargetExistsAsync(targetId);
+
+        if (input.TargetId != Guid.Empty && input.TargetId != targetId)
+        {
+            throw new UserFriendlyException("TargetId mismatch.");
+        }
+
+        input.TargetId = targetId;
+
+        ValidateAlertPolicyInput(input);
+
+        var normalizedChannels = NormalizeChannelsJson(input.ChannelsJson);
+
+        var existing = await _alertPolicyRepository.FirstOrDefaultAsync(x => x.TargetId == targetId);
+        if (existing == null)
+        {
+            existing = new AlertPolicy(
+                _guidGenerator.Create(),
+                targetId,
+                input.Enabled,
+                input.NotifyAfterFailures,
+                input.RepeatMinutes,
+                input.RecoverQuietMinutes,
+                normalizedChannels,
+                input.SuppressDuringMaintenance);
+
+            await _alertPolicyRepository.InsertAsync(existing, autoSave: true);
+        }
+        else
+        {
+            existing.Update(
+                input.Enabled,
+                input.NotifyAfterFailures,
+                input.RepeatMinutes,
+                input.RecoverQuietMinutes,
+                normalizedChannels,
+                input.SuppressDuringMaintenance);
+
+            await _alertPolicyRepository.UpdateAsync(existing, autoSave: true);
+        }
+
+        var dto = ObjectMapper.Map<AlertPolicy, AlertPolicyDto>(existing);
+        dto.TargetId = targetId;
+        dto.IsInherited = false;
+        return dto;
+    }
+
+    public async Task<List<MaintenanceWindowDto>> GetMaintenanceAsync(Guid? targetId = null)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
+
+        var queryable = await _maintenanceRepository.GetQueryableAsync();
+
+        if (targetId.HasValue)
+        {
+            var id = targetId.Value;
+            queryable = queryable.Where(x => x.TargetId == null || x.TargetId == id);
+        }
+
+        var windows = await AsyncExecuter.ToListAsync(
+            queryable
+                .OrderBy(x => x.StartUtc));
+
+        return ObjectMapper.Map<List<MaintenanceWindow>, List<MaintenanceWindowDto>>(windows);
+    }
+
+    public async Task<MaintenanceWindowDto> CreateMaintenanceAsync(CreateUpdateMaintenanceWindowDto input)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Edit);
+
+        if (input == null)
+        {
+            throw new ArgumentNullException(nameof(input));
+        }
+
+        ValidateMaintenanceWindow(input);
+
+        if (input.TargetId.HasValue)
+        {
+            await EnsureTargetExistsAsync(input.TargetId.Value);
+        }
+
+        var entity = new MaintenanceWindow(
+            _guidGenerator.Create(),
+            input.TargetId,
+            input.StartUtc,
+            input.EndUtc,
+            input.Reason);
+
+        var created = await _maintenanceRepository.InsertAsync(entity, autoSave: true);
+        return ObjectMapper.Map<MaintenanceWindow, MaintenanceWindowDto>(created);
+    }
+
+    public async Task DeleteMaintenanceAsync(Guid id)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Edit);
+
+        await _maintenanceRepository.DeleteAsync(id);
+    }
+
     private IQueryable<MonitoringTarget> ApplySorting(IQueryable<MonitoringTarget> query, string? sorting)
     {
         if (sorting.IsNullOrWhiteSpace())
@@ -344,6 +500,110 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         }
 
         ValidateEndpointAndSettings(input);
+    }
+
+    private void ValidateAlertPolicyInput(AlertPolicyDto input)
+    {
+        if (input.NotifyAfterFailures < 1)
+        {
+            throw new UserFriendlyException("NotifyAfterFailures must be at least 1.");
+        }
+
+        if (input.RepeatMinutes < 1)
+        {
+            throw new UserFriendlyException("RepeatMinutes must be at least 1.");
+        }
+
+        if (input.RecoverQuietMinutes < 0)
+        {
+            throw new UserFriendlyException("RecoverQuietMinutes cannot be negative.");
+        }
+
+        if (!input.ChannelsJson.IsNullOrWhiteSpace())
+        {
+            if (input.ChannelsJson!.Length > AlertPolicyConsts.ChannelsJsonMaxLength)
+            {
+                throw new UserFriendlyException($"ChannelsJson cannot exceed {AlertPolicyConsts.ChannelsJsonMaxLength} characters.");
+            }
+
+            try
+            {
+                JsonDocument.Parse(input.ChannelsJson);
+            }
+            catch (JsonException)
+            {
+                throw new UserFriendlyException("ChannelsJson must be valid JSON.");
+            }
+        }
+    }
+
+    private void ValidateMaintenanceWindow(CreateUpdateMaintenanceWindowDto input)
+    {
+        if (input.StartUtc == default)
+        {
+            throw new UserFriendlyException("StartUtc is required.");
+        }
+
+        if (input.EndUtc == default)
+        {
+            throw new UserFriendlyException("EndUtc is required.");
+        }
+
+        if (input.EndUtc <= input.StartUtc)
+        {
+            throw new UserFriendlyException("EndUtc must be greater than StartUtc.");
+        }
+
+        if (!input.Reason.IsNullOrWhiteSpace() && input.Reason!.Length > MaintenanceWindowConsts.ReasonMaxLength)
+        {
+            throw new UserFriendlyException($"Reason cannot exceed {MaintenanceWindowConsts.ReasonMaxLength} characters.");
+        }
+    }
+
+    private string? NormalizeChannelsJson(string? channelsJson)
+    {
+        if (channelsJson.IsNullOrWhiteSpace())
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(channelsJson);
+            var normalized = JsonSerializer.Serialize(document.RootElement, AlertChannelsSerializerOptions);
+
+            if (normalized.Length > AlertPolicyConsts.ChannelsJsonMaxLength)
+            {
+                throw new UserFriendlyException($"ChannelsJson cannot exceed {AlertPolicyConsts.ChannelsJsonMaxLength} characters.");
+            }
+
+            return normalized;
+        }
+        catch (JsonException)
+        {
+            throw new UserFriendlyException("ChannelsJson must be valid JSON.");
+        }
+    }
+
+    private string? SerializeDefaultChannels(Dictionary<string, string[]>? channels)
+    {
+        if (channels == null || channels.Count == 0)
+        {
+            return null;
+        }
+
+        return JsonSerializer.Serialize(channels, AlertChannelsSerializerOptions);
+    }
+
+    private async Task<MonitoringTarget> EnsureTargetExistsAsync(Guid targetId)
+    {
+        var target = await _repository.FindAsync(targetId);
+        if (target == null)
+        {
+            throw new EntityNotFoundException(typeof(MonitoringTarget), targetId);
+        }
+
+        return target;
     }
 
     private void ValidateEndpointAndSettings(CreateUpdateMonitoringTargetDto input)

@@ -64,6 +64,8 @@ public class HRSDataIntegrationDbContext :
 
     #region Monitoring
     public DbSet<MonitoringTarget> MonitoringTargets { get; set; }
+    public DbSet<AlertPolicy> MonitoringAlertPolicies { get; set; }
+    public DbSet<MaintenanceWindow> MonitoringMaintenanceWindows { get; set; }
     public DbSet<ServiceStatusHistory> ServiceStatusHistories { get; set; }
     public DbSet<OutageWindow> OutageWindows { get; set; }
     #endregion Monitoring
@@ -233,6 +235,31 @@ public class HRSDataIntegrationDbContext :
             b.HasIndex(x => new { x.IsActive, x.NextDueAt })
                 .HasDatabaseName("IX_MonitoringTargets_IsActive_NextDueAt");
             b.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        builder.Entity<AlertPolicy>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "AlertPolicies", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.ChannelsJson).HasMaxLength(AlertPolicyConsts.ChannelsJsonMaxLength);
+            b.HasIndex(x => x.TargetId).IsUnique();
+            b.HasOne<MonitoringTarget>()
+                .WithOne()
+                .HasForeignKey<AlertPolicy>(x => x.TargetId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<MaintenanceWindow>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "Maintenance", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.Reason).HasMaxLength(MaintenanceWindowConsts.ReasonMaxLength);
+            b.HasIndex(x => new { x.TargetId, x.StartUtc, x.EndUtc })
+                .HasDatabaseName("IX_Target_Start_End");
+            b.HasOne<MonitoringTarget>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<ServiceStatusHistory>(b =>
