@@ -120,7 +120,7 @@ public class TcpCheckProvider : IHealthCheckProvider
 
         string candidate = value;
 
-        if (!value.Contains('://', StringComparison.Ordinal))
+        if (!value.Contains("://", StringComparison.Ordinal))
         {
             candidate = $"tcp://{value}";
         }

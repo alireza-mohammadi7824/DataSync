@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -280,16 +281,82 @@ public class RedisCheckProvider : IHealthCheckProvider
             .ConnectAsync(sentinelOptions)
             .WaitAsync(cancellationToken);
 
-        var master = await sentinelConnection.GetSentinelMasterAddressByNameAsync(settings.SentinelMasterName);
-        if (master is null)
+        string? masterHost = null;
+        int masterPort = 0;
+        foreach (var endpoint in sentinelConnection.GetEndPoints())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var server = sentinelConnection.GetServer(endpoint);
+            if (!server.IsConnected)
+            {
+                continue;
+            }
+
+            try
+            {
+                var result = await server.ExecuteAsync(
+                    "SENTINEL",
+                    "get-master-addr-by-name",
+                    settings.SentinelMasterName);
+
+                if (result.Type != ResultType.MultiBulk)
+                {
+                    continue;
+                }
+
+                var values = (RedisResult[])result;
+                if (values.Length < 2)
+                {
+                    continue;
+                }
+
+                if (values[0].IsNull || values[1].IsNull)
+                {
+                    continue;
+                }
+
+                var hostCandidate = values[0].ToString();
+                var portCandidate = values[1].ToString();
+
+                if (string.IsNullOrWhiteSpace(hostCandidate))
+                {
+                    continue;
+                }
+
+                if (!int.TryParse(portCandidate, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedPort) ||
+                    parsedPort <= 0)
+                {
+                    continue;
+                }
+
+                masterHost = hostCandidate;
+                masterPort = parsedPort;
+                break;
+            }
+            catch (RedisConnectionException)
+            {
+                continue;
+            }
+            catch (RedisServerException)
+            {
+                continue;
+            }
+            catch (RedisException)
+            {
+                continue;
+            }
+        }
+
+        if (masterHost is null)
         {
             return (null, null, "Sentinel master not found");
         }
 
         var options = CreateBaseOptions(settings, timeout);
-        options.EndPoints.Add(master);
+        options.EndPoints.Add(masterHost, masterPort);
 
-        return (options, master, null);
+        return (options, new DnsEndPoint(masterHost, masterPort), null);
     }
 
     private static ConfigurationOptions CreateBaseOptions(RedisSettings settings, TimeSpan timeout)
@@ -366,7 +433,7 @@ public class RedisCheckProvider : IHealthCheckProvider
         }
 
         var candidate = value;
-        if (!value.Contains('://', StringComparison.Ordinal))
+        if (!value.Contains("://", StringComparison.Ordinal))
         {
             candidate = $"redis://{value}";
         }

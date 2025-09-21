@@ -1,8 +1,11 @@
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Monitoring.HealthChecks;
+using Monitoring.Workers;
 using Volo.Abp.AutoMapper;
 using Volo.Abp.Authorization;
+using Volo.Abp.BackgroundWorkers;
 using Volo.Abp.Modularity;
 
 namespace Monitoring;
@@ -11,7 +14,8 @@ namespace Monitoring;
     typeof(MonitoringDomainModule),
     typeof(MonitoringApplicationContractsModule),
     typeof(AbpAutoMapperModule),
-    typeof(AbpAuthorizationModule)
+    typeof(AbpAuthorizationModule),
+    typeof(AbpBackgroundWorkersModule)
     )]
 public class MonitoringApplicationModule : AbpModule
 {
@@ -29,5 +33,10 @@ public class MonitoringApplicationModule : AbpModule
         {
             options.AddMaps<MonitoringApplicationModule>();
         });
+    }
+
+    public override async Task OnApplicationInitializationAsync(ApplicationInitializationContext context)
+    {
+        await context.AddBackgroundWorkerAsync<MonitoringWorker>();
     }
 }
