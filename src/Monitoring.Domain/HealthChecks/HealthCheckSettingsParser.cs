@@ -25,6 +25,11 @@ internal static class HealthCheckSettingsParser
         return Deserialize(json, new TcpSettings());
     }
 
+    public static RedisSettings ParseRedis(string? json)
+    {
+        return Deserialize(json, new RedisSettings());
+    }
+
     private static T Deserialize<T>(string? json, T fallback)
         where T : class
     {

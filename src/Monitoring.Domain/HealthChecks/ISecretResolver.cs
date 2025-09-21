@@ -1,26 +1,21 @@
 using System;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Monitoring.HealthChecks;
 
 public interface ISecretResolver
 {
-    Task<string?> ResolveAsync(string? reference, CancellationToken cancellationToken = default);
+    string? Resolve(string? reference);
 }
 
 public sealed class EnvironmentSecretResolver : ISecretResolver
 {
-    public Task<string?> ResolveAsync(string? reference, CancellationToken cancellationToken = default)
+    public string? Resolve(string? reference)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
         if (string.IsNullOrWhiteSpace(reference))
         {
-            return Task.FromResult<string?>(null);
+            return null;
         }
 
-        var value = Environment.GetEnvironmentVariable(reference);
-        return Task.FromResult(value);
+        return Environment.GetEnvironmentVariable(reference);
     }
 }

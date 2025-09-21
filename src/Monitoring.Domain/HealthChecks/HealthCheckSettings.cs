@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Monitoring.HealthChecks;
@@ -42,4 +43,31 @@ public sealed class TcpSettings
     public string? Host { get; set; }
 
     public int? Port { get; set; }
+}
+
+public sealed class RedisSettings
+{
+    public string Mode { get; set; } = "standalone";
+
+    public string[] Endpoints { get; set; } = Array.Empty<string>();
+
+    public string[]? Sentinels { get; set; }
+
+    public string? SentinelMasterName { get; set; }
+
+    public string? UsernameRef { get; set; }
+
+    public string? PasswordRef { get; set; }
+
+    public bool UseTls { get; set; }
+
+    public bool AllowAdmin { get; set; }
+
+    public int Database { get; set; } = 0;
+
+    public string ExpectedRole { get; set; } = "any";
+
+    public bool PingCheck { get; set; } = true;
+
+    public int LatencyThresholdMs { get; set; } = 0;
 }

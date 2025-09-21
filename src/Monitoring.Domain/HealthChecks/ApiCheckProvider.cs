@@ -56,7 +56,7 @@ public class ApiCheckProvider : IHealthCheckProvider
 
         ApplyHeaders(settings, request);
 
-        var authResult = await ApplyAuthenticationAsync(settings, request, triggerSource, cancellationToken);
+        var authResult = ApplyAuthentication(settings, request, triggerSource);
         if (authResult is not null)
         {
             return authResult;
@@ -150,11 +150,10 @@ public class ApiCheckProvider : IHealthCheckProvider
         }
     }
 
-    private async Task<HealthCheckResult?> ApplyAuthenticationAsync(
+    private HealthCheckResult? ApplyAuthentication(
         ApiSettings settings,
         HttpRequestMessage request,
-        string triggerSource,
-        CancellationToken cancellationToken)
+        string triggerSource)
     {
         if (settings.Auth is null || string.IsNullOrWhiteSpace(settings.Auth.Scheme))
         {
@@ -165,7 +164,7 @@ public class ApiCheckProvider : IHealthCheckProvider
 
         if (string.Equals(scheme, "Bearer", StringComparison.OrdinalIgnoreCase))
         {
-            var token = await _secretResolver.ResolveAsync(settings.Auth.TokenRef, cancellationToken);
+            var token = _secretResolver.Resolve(settings.Auth.TokenRef);
             if (string.IsNullOrWhiteSpace(token))
             {
                 return new HealthCheckResult(false, null, "Auth token missing", triggerSource);
@@ -175,8 +174,8 @@ public class ApiCheckProvider : IHealthCheckProvider
         }
         else if (string.Equals(scheme, "Basic", StringComparison.OrdinalIgnoreCase))
         {
-            var username = await _secretResolver.ResolveAsync(settings.Auth.UsernameRef, cancellationToken);
-            var password = await _secretResolver.ResolveAsync(settings.Auth.PasswordRef, cancellationToken);
+            var username = _secretResolver.Resolve(settings.Auth.UsernameRef);
+            var password = _secretResolver.Resolve(settings.Auth.PasswordRef);
 
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
