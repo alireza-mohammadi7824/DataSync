@@ -41,7 +41,7 @@ public class MonitoringWorker : BackgroundService
     {
         using var timer = new PeriodicTimer(WorkerInterval);
 
-        while (!stoppingToken.IsCancellationRequested)
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
             {
@@ -54,18 +54,6 @@ public class MonitoringWorker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Monitoring worker cycle failed");
-            }
-
-            try
-            {
-                if (!await timer.WaitForNextTickAsync(stoppingToken))
-                {
-                    break;
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                break;
             }
         }
     }
@@ -104,7 +92,7 @@ public class MonitoringWorker : BackgroundService
             result = new HealthCheckResult(false, null, "Worker error", TriggerSource);
         }
 
-        await using var uow = _unitOfWorkManager.Begin(requiresNew: true, isTransactional: false);
+        using var uow = _unitOfWorkManager.Begin(requiresNew: true, isTransactional: false);
 
         var recordedAt = _clock.Now;
         MonitoringTargetCheckProcessor.ApplyResult(target, result, recordedAt);
