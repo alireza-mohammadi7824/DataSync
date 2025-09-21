@@ -7,6 +7,7 @@ public class MonitoringOptions
 {
     public AlertDefaultsOptions AlertDefaults { get; set; } = new();
     public NotificationChannelOptions Notifications { get; set; } = new();
+    public DashboardOptions Dashboard { get; set; } = new();
 
     public class AlertDefaultsOptions
     {
@@ -51,5 +52,12 @@ public class MonitoringOptions
     {
         public Dictionary<string, string>? DefaultHeaders { get; set; }
             = new();
+    }
+
+    public class DashboardOptions
+    {
+        public int DefaultRangeDays { get; set; } = 7;
+
+        public int MaxRangeDays { get; set; } = 180;
     }
 }

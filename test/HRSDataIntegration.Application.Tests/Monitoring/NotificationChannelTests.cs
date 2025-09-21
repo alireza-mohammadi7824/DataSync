@@ -42,7 +42,7 @@ public class NotificationChannelTests
 
         var channel = new WebhookNotificationChannel(
             factory,
-            NullLoggerFactory.Instance.CreateLogger<WebhookNotificationChannel>(),
+            NullLogger<WebhookNotificationChannel>.Instance,
             new List<string> { server.BaseAddress.ToString() },
             new Dictionary<string, string>());
 
@@ -86,7 +86,7 @@ public class NotificationChannelTests
         var factory = new TestHttpClientFactory(new HttpClient(new HttpClientHandler()));
         var channel = new TelegramNotificationChannel(
             factory,
-            NullLoggerFactory.Instance.CreateLogger<TelegramNotificationChannel>(),
+            NullLogger<TelegramNotificationChannel>.Instance,
             string.Empty,
             Array.Empty<string>());
 

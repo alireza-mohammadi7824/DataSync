@@ -14,16 +14,29 @@ public class MonitoringMenuContributor : IMenuContributor
             return;
         }
 
+        if (!await context.IsGrantedAsync(MonitoringPermissions.Services.View))
+        {
+            return;
+        }
+
         var monitoringMenu = new ApplicationMenuItem(
-            MonitoringMenus.MonitoringTargets,
+            MonitoringMenus.Monitoring,
             displayName: "Monitoring",
-            url: "/Monitoring/Targets",
             icon: "fa fa-chart-line"
         );
 
-        if (await context.IsGrantedAsync(MonitoringPermissions.Services.View))
-        {
-            context.Menu.AddItem(monitoringMenu);
-        }
+        monitoringMenu.AddItem(new ApplicationMenuItem(
+            MonitoringMenus.MonitoringDashboard,
+            displayName: "Dashboard",
+            url: "/Monitoring/Dashboard"
+        ));
+
+        monitoringMenu.AddItem(new ApplicationMenuItem(
+            MonitoringMenus.MonitoringTargets,
+            displayName: "Services",
+            url: "/Monitoring/Targets"
+        ));
+
+        context.Menu.AddItem(monitoringMenu);
     }
 }

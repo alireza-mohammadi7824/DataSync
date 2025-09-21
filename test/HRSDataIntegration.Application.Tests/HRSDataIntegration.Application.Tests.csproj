@@ -12,12 +12,14 @@
     <ProjectReference Include="..\..\src\HRSDataIntegration.Application\HRSDataIntegration.Application.csproj" />
     <ProjectReference Include="..\..\src\Monitoring.Application\Monitoring.Application.csproj" />
     <ProjectReference Include="..\..\src\Monitoring.Domain\Monitoring.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Monitoring.HttpApi\Monitoring.HttpApi.csproj" />
     <ProjectReference Include="..\HRSDataIntegration.Domain.Tests\HRSDataIntegration.Domain.Tests.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="8.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
   </ItemGroup>
 
 </Project>
