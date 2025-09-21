@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Monitoring;
 using HRSDataIntegration.EntityFrameworkCore;
 using HRSDataIntegration.Localization;
 using HRSDataIntegration.MultiTenancy;
@@ -62,7 +63,8 @@ namespace HRSDataIntegration.Web;
     typeof(AbpAccountWebOpenIddictModule),
     typeof(AbpTenantManagementWebModule),
     typeof(AbpSwashbuckleModule),
-    typeof(AbpAspNetCoreSerilogModule)
+    typeof(AbpAspNetCoreSerilogModule),
+    typeof(MonitoringWebModule)
 )]
 public class HRSDataIntegrationWebModule : AbpModule
 {
@@ -79,7 +81,10 @@ public class HRSDataIntegrationWebModule : AbpModule
                 typeof(HRSDataIntegrationDomainSharedModule).Assembly,
                 typeof(HRSDataIntegrationApplicationModule).Assembly,
                 typeof(HRSDataIntegrationApplicationContractsModule).Assembly,
-                typeof(HRSDataIntegrationWebModule).Assembly
+                typeof(HRSDataIntegrationWebModule).Assembly,
+                typeof(MonitoringApplicationModule).Assembly,
+                typeof(MonitoringApplicationContractsModule).Assembly,
+                typeof(MonitoringWebModule).Assembly
             );
         });
 
@@ -217,6 +222,10 @@ public class HRSDataIntegrationWebModule : AbpModule
                 options.FileSets.ReplaceEmbeddedByPhysical<HRSDataIntegrationApplicationModule>(Path.Combine(hostingEnvironment.ContentRootPath, string.Format("..{0}HRSDataIntegration.Application", Path.DirectorySeparatorChar)));
                 options.FileSets.ReplaceEmbeddedByPhysical<HRSDataIntegrationHttpApiModule>(Path.Combine(hostingEnvironment.ContentRootPath, string.Format("..{0}..{0}src{0}HRSDataIntegration.HttpApi", Path.DirectorySeparatorChar)));
                 options.FileSets.ReplaceEmbeddedByPhysical<HRSDataIntegrationWebModule>(hostingEnvironment.ContentRootPath);
+                options.FileSets.ReplaceEmbeddedByPhysical<MonitoringApplicationContractsModule>(Path.Combine(hostingEnvironment.ContentRootPath, string.Format("..{0}Monitoring.Application.Contracts", Path.DirectorySeparatorChar)));
+                options.FileSets.ReplaceEmbeddedByPhysical<MonitoringApplicationModule>(Path.Combine(hostingEnvironment.ContentRootPath, string.Format("..{0}Monitoring.Application", Path.DirectorySeparatorChar)));
+                options.FileSets.ReplaceEmbeddedByPhysical<MonitoringHttpApiModule>(Path.Combine(hostingEnvironment.ContentRootPath, string.Format("..{0}Monitoring.HttpApi", Path.DirectorySeparatorChar)));
+                options.FileSets.ReplaceEmbeddedByPhysical<MonitoringWebModule>(Path.Combine(hostingEnvironment.ContentRootPath, string.Format("..{0}Monitoring.Web", Path.DirectorySeparatorChar)));
             }
         });
     }
