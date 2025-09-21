@@ -1,0 +1,26 @@
+using Monitoring.Localization;
+using Volo.Abp.Authorization.Permissions;
+using Volo.Abp.Localization;
+
+namespace Monitoring.Permissions;
+
+public class MonitoringPermissionDefinitionProvider : PermissionDefinitionProvider
+{
+    public override void Define(IPermissionDefinitionContext context)
+    {
+        var monitoringGroup = context.AddGroup(MonitoringPermissions.GroupName, L("Permission:Monitoring"));
+
+        var services = monitoringGroup.AddPermission(MonitoringPermissions.Services.Default, L("Permission:Monitoring.Services"));
+
+        services.AddChild(MonitoringPermissions.Services.View, L("Permission:Monitoring.Services.View"));
+        services.AddChild(MonitoringPermissions.Services.Create, L("Permission:Monitoring.Services.Create"));
+        services.AddChild(MonitoringPermissions.Services.Edit, L("Permission:Monitoring.Services.Edit"));
+        services.AddChild(MonitoringPermissions.Services.Delete, L("Permission:Monitoring.Services.Delete"));
+        services.AddChild(MonitoringPermissions.Services.Run, L("Permission:Monitoring.Services.Run"));
+    }
+
+    private static LocalizableString L(string name)
+    {
+        return LocalizableString.Create<MonitoringResource>(name);
+    }
+}
