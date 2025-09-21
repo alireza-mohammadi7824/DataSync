@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Monitoring.Dashboard;
 using Monitoring.Targets;
 using Monitoring.Permissions;
@@ -11,6 +12,7 @@ namespace Monitoring.Controllers;
 
 [Route("api/monitoring/dashboard")]
 [Authorize(MonitoringPermissions.Services.View)]
+[EnableRateLimiting("monitoring-read")]
 public class MonitoringDashboardController : MonitoringController
 {
     private readonly IDashboardAppService _dashboardAppService;

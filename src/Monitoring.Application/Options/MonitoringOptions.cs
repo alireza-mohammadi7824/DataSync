@@ -6,8 +6,14 @@ namespace Monitoring.Options;
 public class MonitoringOptions
 {
     public AlertDefaultsOptions AlertDefaults { get; set; } = new();
+
     public NotificationChannelOptions Notifications { get; set; } = new();
+
     public DashboardOptions Dashboard { get; set; } = new();
+
+    public ExecutionOptions Execution { get; set; } = new();
+
+    public RetentionOptions Retention { get; set; } = new();
 
     public class AlertDefaultsOptions
     {
@@ -59,5 +65,26 @@ public class MonitoringOptions
         public int DefaultRangeDays { get; set; } = 7;
 
         public int MaxRangeDays { get; set; } = 180;
+    }
+
+    public class ExecutionOptions
+    {
+        public int MaxConcurrentChecks { get; set; } = 8;
+
+        public int LockTtlBufferSeconds { get; set; } = 5;
+
+        public int? GlobalCheckTimeoutSeconds { get; set; }
+            = null;
+    }
+
+    public class RetentionOptions
+    {
+        public int HistoryDays { get; set; } = 90;
+
+        public int MaxHistoryPerTarget { get; set; } = 10_000;
+
+        public int PurgeBatchSize { get; set; } = 1_000;
+
+        public int MinOutagesPerTarget { get; set; } = 50;
     }
 }

@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Monitoring.Dashboard;
 using Monitoring.Permissions;
 
@@ -10,6 +11,7 @@ namespace Monitoring.Controllers;
 
 [Route("api/monitoring/export")]
 [Authorize(MonitoringPermissions.Services.View)]
+[EnableRateLimiting("monitoring-read")]
 public class MonitoringExportController : MonitoringController
 {
     private readonly IDashboardAppService _dashboardAppService;

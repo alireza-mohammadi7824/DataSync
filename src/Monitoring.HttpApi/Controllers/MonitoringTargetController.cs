@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
 using Monitoring.Permissions;
@@ -12,6 +13,7 @@ namespace Monitoring.Targets;
 [RemoteService(Name = "Monitoring")]
 [Area("Monitoring")]
 [Authorize(MonitoringPermissions.Services.View)]
+[EnableRateLimiting("monitoring-read")]
 [Route("api/monitoring/targets")]
 public class MonitoringTargetController : MonitoringController
 {
@@ -62,6 +64,7 @@ public class MonitoringTargetController : MonitoringController
     [HttpPut]
     [Route("{id}/alert-policy")]
     [Authorize(MonitoringPermissions.Services.Edit)]
+    [EnableRateLimiting("monitoring-write")]
     public virtual Task<AlertPolicyDto> UpsertAlertPolicyAsync(Guid id, AlertPolicyDto input)
     {
         return _monitoringTargetAppService.UpsertAlertPolicyAsync(id, input);
@@ -76,6 +79,7 @@ public class MonitoringTargetController : MonitoringController
 
     [HttpPost]
     [Authorize(MonitoringPermissions.Services.Create)]
+    [EnableRateLimiting("monitoring-write")]
     public virtual Task<MonitoringTargetDto> CreateAsync(CreateUpdateMonitoringTargetDto input)
     {
         return _monitoringTargetAppService.CreateAsync(input);
@@ -84,6 +88,7 @@ public class MonitoringTargetController : MonitoringController
     [HttpPut]
     [Route("{id}")]
     [Authorize(MonitoringPermissions.Services.Edit)]
+    [EnableRateLimiting("monitoring-write")]
     public virtual Task<MonitoringTargetDto> UpdateAsync(Guid id, CreateUpdateMonitoringTargetDto input)
     {
         return _monitoringTargetAppService.UpdateAsync(id, input);
@@ -92,6 +97,7 @@ public class MonitoringTargetController : MonitoringController
     [HttpDelete]
     [Route("{id}")]
     [Authorize(MonitoringPermissions.Services.Delete)]
+    [EnableRateLimiting("monitoring-write")]
     public virtual Task DeleteAsync(Guid id)
     {
         return _monitoringTargetAppService.DeleteAsync(id);
@@ -100,32 +106,58 @@ public class MonitoringTargetController : MonitoringController
     [HttpPost]
     [Route("{id}/trigger")]
     [Authorize(MonitoringPermissions.Services.Run)]
-    public virtual Task TriggerAsync(Guid id)
+    [EnableRateLimiting("monitoring-write")]
+    public virtual async Task<IActionResult> TriggerAsync(Guid id)
     {
-        return _monitoringTargetAppService.TriggerCheckAsync(id);
+        try
+        {
+            await _monitoringTargetAppService.TriggerCheckAsync(id);
+            return Accepted();
+        }
+        catch (MonitoringCheckConflictException ex)
+        {
+            return Conflict(new RemoteServiceErrorInfo(ex.Message));
+        }
     }
 
     [HttpPost]
     [Route("{id}/check")]
     [Authorize(MonitoringPermissions.Services.Run)]
-    public virtual Task<HealthCheckResultDto> CheckNowAsync(Guid id)
+    [EnableRateLimiting("monitoring-write")]
+    public virtual async Task<IActionResult> CheckNowAsync(Guid id)
     {
-        return _monitoringTargetAppService.CheckNowAsync(id);
+        try
+        {
+            var dto = await _monitoringTargetAppService.CheckNowAsync(id);
+            return Ok(dto);
+        }
+        catch (MonitoringCheckConflictException ex)
+        {
+            return Conflict(new RemoteServiceErrorInfo(ex.Message));
+        }
     }
 
     [HttpPost]
     [Route("check-all")]
     [Authorize(MonitoringPermissions.Services.Run)]
-    public virtual Task<List<HealthCheckResultDto>> CheckAllAsync()
+    [EnableRateLimiting("monitoring-write")]
+    public virtual async Task<IActionResult> EnqueueCheckAllAsync()
     {
-        return _monitoringTargetAppService.CheckAllAsync();
+        var result = await _monitoringTargetAppService.EnqueueCheckAllAsync();
+        return AcceptedAtAction(nameof(GetCheckBatchStatusAsync), new { id = result.BatchId }, result);
     }
 
-    [HttpPost]
-    [Route("~/api/monitoring/check-all")]
-    [Authorize(MonitoringPermissions.Services.Run)]
-    public virtual Task<int> CheckAllNowAsync()
+    [HttpGet]
+    [Route("~/api/monitoring/check-batch/{id}/status")]
+    public virtual Task<CheckBatchStatusDto> GetCheckBatchStatusAsync(Guid id)
     {
-        return _monitoringTargetAppService.CheckAllNowAsync();
+        return _monitoringTargetAppService.GetCheckBatchStatusAsync(id);
+    }
+
+    [HttpGet]
+    [Route("~/api/monitoring/metrics")]
+    public virtual Task<MonitoringMetricsDto> GetMetricsAsync()
+    {
+        return _monitoringTargetAppService.GetMetricsAsync();
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Monitoring.Permissions;
 using Volo.Abp;
 
@@ -11,6 +12,7 @@ namespace Monitoring.Targets;
 [RemoteService(Name = "Monitoring")]
 [Area("Monitoring")]
 [Authorize(MonitoringPermissions.Services.View)]
+[EnableRateLimiting("monitoring-read")]
 [Route("api/monitoring/maintenance")]
 public class MonitoringMaintenanceController : MonitoringController
 {
@@ -29,6 +31,7 @@ public class MonitoringMaintenanceController : MonitoringController
 
     [HttpPost]
     [Authorize(MonitoringPermissions.Services.Edit)]
+    [EnableRateLimiting("monitoring-write")]
     public virtual Task<MaintenanceWindowDto> CreateAsync(CreateUpdateMaintenanceWindowDto input)
     {
         return _appService.CreateMaintenanceAsync(input);
@@ -37,6 +40,7 @@ public class MonitoringMaintenanceController : MonitoringController
     [HttpDelete]
     [Route("{id}")]
     [Authorize(MonitoringPermissions.Services.Edit)]
+    [EnableRateLimiting("monitoring-write")]
     public virtual Task DeleteAsync(Guid id)
     {
         return _appService.DeleteMaintenanceAsync(id);

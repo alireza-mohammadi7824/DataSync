@@ -277,6 +277,33 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
                 .IsRequired();
         });
 
+        modelBuilder.Entity("Monitoring.Targets.MonitoringRunLock", b =>
+        {
+            b.Property<Guid>("Id")
+                .HasColumnType("uniqueidentifier");
+
+            b.Property<DateTime>("ExpiresAt")
+                .HasColumnType("datetime2");
+
+            b.Property<DateTime>("LockedAt")
+                .HasColumnType("datetime2");
+
+            b.Property<string>("NodeId")
+                .IsRequired()
+                .HasMaxLength(128)
+                .HasColumnType("nvarchar(128)");
+
+            b.Property<Guid>("TargetId")
+                .HasColumnType("uniqueidentifier");
+
+            b.HasKey("Id");
+
+            b.HasIndex("TargetId")
+                .IsUnique();
+
+            b.ToTable("MonitoringRunLocks", (string)null);
+        });
+
         modelBuilder.Entity("Monitoring.Targets.ServiceStatusHistory", b =>
         {
             b.Property<Guid>("Id")

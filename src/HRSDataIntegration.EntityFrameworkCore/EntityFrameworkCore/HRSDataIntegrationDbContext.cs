@@ -68,6 +68,7 @@ public class HRSDataIntegrationDbContext :
     public DbSet<MaintenanceWindow> MonitoringMaintenanceWindows { get; set; }
     public DbSet<ServiceStatusHistory> ServiceStatusHistories { get; set; }
     public DbSet<OutageWindow> OutageWindows { get; set; }
+    public DbSet<MonitoringRunLock> MonitoringRunLocks { get; set; }
     #endregion Monitoring
     #region Job
     public DbSet<Job> Job { get; set; }
@@ -293,6 +294,19 @@ public class HRSDataIntegrationDbContext :
                 .WithMany()
                 .HasForeignKey(x => x.TargetId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<MonitoringRunLock>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "RunLocks", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.NodeId)
+                .IsRequired()
+                .HasMaxLength(MonitoringConsts.MaxNodeIdLength);
+            b.Property(x => x.LockedAt).IsRequired();
+            b.Property(x => x.ExpiresAt).IsRequired();
+            b.HasIndex(x => x.TargetId)
+                .IsUnique();
         });
 
 

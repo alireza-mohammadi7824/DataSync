@@ -1,6 +1,7 @@
 using System.IO;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -36,6 +37,7 @@ using OpenIddict.Validation.AspNetCore;
 using Volo.Abp.TenantManagement.Web;
 using System;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Extensions.DependencyInjection;
 using Volo.Abp.Account.Web;
@@ -153,6 +155,31 @@ public class HRSDataIntegrationWebModule : AbpModule
         }
         context.Services.AddServiceMassTransit(configuration);
 
+        context.Services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.AddPolicy("monitoring-write", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    GetRateLimitPartitionKey(httpContext),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 5,
+                        Window = TimeSpan.FromSeconds(10),
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    }));
+            options.AddPolicy("monitoring-read", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    GetRateLimitPartitionKey(httpContext),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 30,
+                        Window = TimeSpan.FromSeconds(10),
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    }));
+        });
+
         ConfigureBundles();
         ConfigureUrls(configuration);
         ConfigureAuthentication(context);
@@ -166,6 +193,19 @@ public class HRSDataIntegrationWebModule : AbpModule
         {
             options.IsDynamicPermissionStoreEnabled = true;
         });
+    }
+
+
+    private static string GetRateLimitPartitionKey(HttpContext httpContext)
+    {
+        if (httpContext.User?.Identity?.IsAuthenticated == true)
+        {
+            return httpContext.User.Identity?.Name
+                   ?? httpContext.User.FindFirst(AbpClaimTypes.UserId)?.Value
+                   ?? "anonymous";
+        }
+
+        return httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
     }
 
 
@@ -286,6 +326,7 @@ public class HRSDataIntegrationWebModule : AbpModule
         app.UseStaticFiles();
         app.UseAbpStudioLink();
         app.UseRouting();
+        app.UseRateLimiter();
         app.UseAbpSecurityHeaders();
         app.UseAuthentication();
         app.UseAbpOpenIddictValidation();

@@ -22,9 +22,11 @@ public interface IMonitoringTargetAppService : IApplicationService
 
     Task<HealthCheckResultDto> CheckNowAsync(Guid id);
 
-    Task<List<HealthCheckResultDto>> CheckAllAsync();
+    Task<CheckBatchEnqueueResultDto> EnqueueCheckAllAsync();
 
-    Task<int> CheckAllNowAsync();
+    Task<CheckBatchStatusDto> GetCheckBatchStatusAsync(Guid batchId);
+
+    Task<MonitoringMetricsDto> GetMetricsAsync();
 
     Task<List<MonitoringTargetDto>> GetOverviewAsync(ServiceType? type = null);
 

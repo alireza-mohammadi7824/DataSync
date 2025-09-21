@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Monitoring.Execution;
 using Monitoring.HealthChecks;
 using Monitoring.Options;
 using Monitoring.Permissions;
@@ -38,32 +39,38 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
     };
 
     private readonly IRepository<MonitoringTarget, Guid> _repository;
-    private readonly IHealthCheckProviderResolver _providerResolver;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
     private readonly IRepository<AlertPolicy, Guid> _alertPolicyRepository;
     private readonly IRepository<MaintenanceWindow, Guid> _maintenanceRepository;
     private readonly IGuidGenerator _guidGenerator;
     private readonly MonitoringOptions _options;
+    private readonly IMonitoringCheckService _checkService;
+    private readonly IBulkCheckQueue _bulkCheckQueue;
+    private readonly ExecutionMetrics _metrics;
 
     public MonitoringTargetAppService(
         IRepository<MonitoringTarget, Guid> repository,
-        IHealthCheckProviderResolver providerResolver,
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
         IRepository<AlertPolicy, Guid> alertPolicyRepository,
         IRepository<MaintenanceWindow, Guid> maintenanceRepository,
         IGuidGenerator guidGenerator,
-        IOptions<MonitoringOptions> options)
+        IOptions<MonitoringOptions> options,
+        IMonitoringCheckService checkService,
+        IBulkCheckQueue bulkCheckQueue,
+        ExecutionMetrics metrics)
     {
         _repository = repository;
-        _providerResolver = providerResolver;
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
         _alertPolicyRepository = alertPolicyRepository;
         _maintenanceRepository = maintenanceRepository;
         _guidGenerator = guidGenerator;
         _options = options.Value;
+        _checkService = checkService;
+        _bulkCheckQueue = bulkCheckQueue;
+        _metrics = metrics;
     }
 
     public async Task<PagedResultDto<MonitoringTargetDto>> GetListAsync(
@@ -210,16 +217,13 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
-        var entity = await _repository.GetAsync(id);
+        var target = await _repository.GetAsync(id);
+        var execution = await _checkService.RunAsync(target, "manual-trigger", true, CancellationTokenProvider.Token);
 
-        var now = Clock.Now;
-        entity.SetLastCheckedAt(now);
-        entity.SetNextDueAt(now);
-        entity.SetCurrentStatus(ServiceStatus.Checking);
-        entity.SetLastStatusChangeAt(now);
-        entity.SetConsecutiveFailures(0);
-
-        await _repository.UpdateAsync(entity, autoSave: true);
+        if (execution.IsSkipped)
+        {
+            throw new MonitoringCheckConflictException(execution.SkipReason ?? "Check skipped");
+        }
     }
 
     public async Task<HealthCheckResultDto> CheckNowAsync(Guid id)
@@ -227,58 +231,75 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
         var target = await _repository.GetAsync(id);
+        var execution = await _checkService.RunAsync(target, "manual", true, CancellationTokenProvider.Token);
 
-        var execution = await ExecuteCheckAsync(target, "manual");
-        var result = execution.Result;
-        var timestamp = execution.Timestamp;
+        if (execution.IsSkipped)
+        {
+            throw new MonitoringCheckConflictException(execution.SkipReason ?? "Check skipped");
+        }
 
-        await _repository.UpdateAsync(target, autoSave: true);
-
-        return CreateResultDto(target, result, timestamp);
+        return CreateResultDto(target, execution.Result!, execution.CompletedAt!.Value);
     }
 
-    public async Task<List<HealthCheckResultDto>> CheckAllAsync()
+    public async Task<CheckBatchEnqueueResultDto> EnqueueCheckAllAsync()
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
-        var targets = await _repository.GetListAsync(target => target.IsActive);
+        var queryable = await _repository.GetQueryableAsync();
+        var ids = await AsyncExecuter.ToListAsync(
+            queryable
+                .Where(target => target.IsActive)
+                .Select(target => target.Id),
+            CancellationTokenProvider.Token);
 
-        var results = new List<HealthCheckResultDto>(targets.Count);
+        var enqueueResult = await _bulkCheckQueue.EnqueueAsync(ids, CancellationTokenProvider.Token);
 
-        foreach (var target in targets)
+        return new CheckBatchEnqueueResultDto
         {
-            var execution = await ExecuteCheckAsync(target, "api");
-            await _repository.UpdateAsync(target, autoSave: true);
-
-            results.Add(CreateResultDto(target, execution.Result, execution.Timestamp));
-        }
-
-        return results;
+            BatchId = enqueueResult.BatchId,
+            TotalTargets = enqueueResult.TotalQueued
+        };
     }
 
-    public async Task<int> CheckAllNowAsync()
+    public async Task<CheckBatchStatusDto> GetCheckBatchStatusAsync(Guid batchId)
     {
-        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
 
-        var targets = await _repository.GetListAsync(target => target.IsActive);
-        var now = Clock.Now;
-
-        foreach (var target in targets)
+        var status = _bulkCheckQueue.GetStatus(batchId);
+        return new CheckBatchStatusDto
         {
-            if (target.CurrentStatus != ServiceStatus.Checking)
-            {
-                target.SetCurrentStatus(ServiceStatus.Checking);
-                target.SetLastStatusChangeAt(now);
-            }
+            BatchId = status.BatchId,
+            TotalTargets = status.Total,
+            Queued = status.Queued,
+            Running = status.Running,
+            Completed = status.Completed,
+            Succeeded = status.Succeeded,
+            Failed = status.Failed,
+            Skipped = status.Skipped
+        };
+    }
 
-            target.SetLastCheckedAt(now);
-            target.SetNextDueAt(now);
-            target.SetConsecutiveFailures(0);
+    public async Task<MonitoringMetricsDto> GetMetricsAsync()
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
 
-            await _repository.UpdateAsync(target, autoSave: true);
-        }
-
-        return targets.Count;
+        var snapshot = _metrics.CreateSnapshot();
+        return new MonitoringMetricsDto
+        {
+            ChecksStarted = snapshot.ChecksStarted,
+            ChecksSucceeded = snapshot.ChecksSucceeded,
+            ChecksFailed = snapshot.ChecksFailed,
+            ChecksSkipped = snapshot.ChecksSkipped,
+            LocksContended = snapshot.LocksContended,
+            PurgeSummaries = snapshot.RecentPurges
+                .Select(p => new PurgeSummaryDto
+                {
+                    CompletedAt = p.CompletedAt,
+                    HistoryRemoved = p.HistoryRemoved,
+                    OutagesRemoved = p.OutagesRemoved
+                })
+                .ToList()
+        };
     }
 
     public async Task<List<MonitoringTargetDto>> GetOverviewAsync(ServiceType? type = null)
@@ -772,36 +793,6 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
             Logger.LogWarning(ex, "Failed to deserialize monitoring settings for {Context}", context);
             throw new UserFriendlyException($"{context} JSON is invalid.");
         }
-    }
-
-    private async Task<(HealthCheckResult Result, DateTime Timestamp)> ExecuteCheckAsync(
-        MonitoringTarget target,
-        string triggerSource,
-        CancellationToken cancellationToken = default)
-    {
-        HealthCheckResult result;
-        try
-        {
-            var provider = _providerResolver.Resolve(target.Type);
-            result = await provider.CheckAsync(target, triggerSource, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "Monitoring check failed for target {TargetId}", target.Id);
-            result = new HealthCheckResult(false, null, "Check error", triggerSource);
-        }
-
-        var timestamp = Clock.Now;
-        _ = await MonitoringTargetCheckProcessor.ApplyResultAsync(
-            target,
-            result,
-            timestamp,
-            _historyRepository,
-            _outageRepository,
-            _guidGenerator,
-            cancellationToken);
-
-        return (result, timestamp);
     }
 
     private static HealthCheckResultDto CreateResultDto(
