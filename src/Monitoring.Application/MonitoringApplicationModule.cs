@@ -5,7 +5,7 @@ using Monitoring.Workers;
 using Volo.Abp;
 using Volo.Abp.AutoMapper;
 using Volo.Abp.Authorization;
-using Volo.Abp.BackgroundWorkers;
+using Volo.Abp.Application;
 using Volo.Abp.Modularity;
 
 namespace Monitoring;
@@ -15,7 +15,7 @@ namespace Monitoring;
     typeof(MonitoringApplicationContractsModule),
     typeof(AbpAutoMapperModule),
     typeof(AbpAuthorizationModule),
-    typeof(AbpBackgroundWorkersModule)
+    typeof(AbpDddApplicationModule)
     )]
 public class MonitoringApplicationModule : AbpModule
 {
@@ -28,7 +28,7 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddTransient<TcpCheckProvider>();
         context.Services.AddTransient<RedisCheckProvider>();
         context.Services.AddTransient<IHealthCheckProviderResolver, HealthCheckProviderResolver>();
-        context.Services.AddHostedService<AbpBackgroundWorkerAdapter<MonitoringWorker>>();
+        context.Services.AddHostedService<MonitoringWorker>();
 
         Configure<AbpAutoMapperOptions>(options =>
         {

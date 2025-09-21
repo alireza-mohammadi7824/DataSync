@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Logging;
 using Monitoring.HealthChecks;
 using Monitoring.Permissions;
 using Volo.Abp.Application.Dtos;
@@ -85,8 +86,7 @@ public class MonitoringTargetAppService :
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
-        var cancellationToken = CancellationTokenProvider.Token;
-        var entity = await Repository.GetAsync(id, cancellationToken: cancellationToken);
+        var entity = await Repository.GetAsync(id);
 
         var now = Clock.Now;
         entity.SetLastCheckedAt(now);
@@ -95,19 +95,20 @@ public class MonitoringTargetAppService :
         entity.SetLastStatusChangeAt(now);
         entity.SetConsecutiveFailures(0);
 
-        await Repository.UpdateAsync(entity, autoSave: true, cancellationToken: cancellationToken);
+        await Repository.UpdateAsync(entity, autoSave: true);
     }
 
     public async Task<HealthCheckResultDto> CheckNowAsync(Guid id)
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
-        var cancellationToken = CancellationTokenProvider.Token;
-        var target = await Repository.GetAsync(id, cancellationToken: cancellationToken);
+        var target = await Repository.GetAsync(id);
 
-        var (result, timestamp) = await ExecuteCheckAsync(target, ManualTriggerSource, cancellationToken);
+        var execution = await ExecuteCheckAsync(target, ManualTriggerSource);
+        var result = execution.Result;
+        var timestamp = execution.Timestamp;
 
-        await Repository.UpdateAsync(target, autoSave: true, cancellationToken: cancellationToken);
+        await Repository.UpdateAsync(target, autoSave: true);
 
         return CreateResultDto(target, result, timestamp);
     }
@@ -116,19 +117,16 @@ public class MonitoringTargetAppService :
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
-        var cancellationToken = CancellationTokenProvider.Token;
-        var targets = await Repository.GetListAsync(target => target.IsActive, cancellationToken: cancellationToken);
+        var targets = await Repository.GetListAsync(target => target.IsActive);
 
         var results = new List<HealthCheckResultDto>(targets.Count);
 
         foreach (var target in targets)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var execution = await ExecuteCheckAsync(target, BulkTriggerSource);
+            await Repository.UpdateAsync(target, autoSave: true);
 
-            var (result, timestamp) = await ExecuteCheckAsync(target, BulkTriggerSource, cancellationToken);
-            await Repository.UpdateAsync(target, autoSave: true, cancellationToken: cancellationToken);
-
-            results.Add(CreateResultDto(target, result, timestamp));
+            results.Add(CreateResultDto(target, execution.Result, execution.Timestamp));
         }
 
         return results;
@@ -137,7 +135,7 @@ public class MonitoringTargetAppService :
     private async Task<(HealthCheckResult Result, DateTime Timestamp)> ExecuteCheckAsync(
         MonitoringTarget target,
         string triggerSource,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
     {
         HealthCheckResult result;
         try
