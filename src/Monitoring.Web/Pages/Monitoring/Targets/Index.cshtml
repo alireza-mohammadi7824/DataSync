@@ -1,0 +1,381 @@
+@page
+@model Monitoring.Web.Pages.Monitoring.Targets.IndexModel
+@{
+    ViewData["Title"] = "Monitoring Services";
+}
+
+<style>
+    .status-border {
+        border: 2px solid var(--card-border);
+        border-radius: .75rem;
+        transition: border-color .15s ease;
+    }
+
+    .status-online {
+        --card-border: #22c55e;
+    }
+
+    .status-offline {
+        --card-border: #ef4444;
+    }
+
+    .status-checking {
+        --card-border: #f59e0b;
+    }
+
+    @@keyframes card-pulse {
+        0% {
+            box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.0);
+        }
+
+        100% {
+            box-shadow: 0 0 0 6px rgba(0, 0, 0, 0.0);
+        }
+    }
+
+    .pulse-now {
+        animation: card-pulse .3s ease-out;
+    }
+</style>
+
+<div class="container-fluid" id="monitoring-page">
+    <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3 mb-4">
+        <div>
+            <h1 class="mb-1">Monitoring Services</h1>
+            <p class="text-muted mb-0">Track and manage the health of your monitored targets.</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            @if (Model.CanEdit)
+            {
+                <button id="monitoring-maintenance-button" class="btn btn-outline-secondary btn-sm" type="button">
+                    <i class="fa fa-wrench me-1"></i>
+                    Maintenance
+                </button>
+            }
+
+            @if (Model.CanCreate)
+            {
+                <button id="monitoring-new-button" class="btn btn-success btn-sm" type="button">
+                    <i class="fa fa-plus me-1"></i>
+                    New Service
+                </button>
+            }
+            @if (Model.CanRun)
+            {
+                <button id="monitoring-check-all-button" class="btn btn-primary btn-sm" type="button">
+                    <i class="fa fa-play-circle me-1"></i>
+                    Check All Now
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="row g-3 align-items-end mb-4" id="monitoring-filters">
+        <div class="col-12 col-md-4 col-xl-3">
+            <label class="form-label" for="monitoring-type-filter">Service type</label>
+            <select id="monitoring-type-filter" class="form-select form-select-sm">
+                <option value="all">All</option>
+                <option value="Website">Website</option>
+                <option value="Api">API</option>
+                <option value="Tcp">TCP</option>
+                <option value="Redis">Redis</option>
+            </select>
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+            <label class="form-label" for="monitoring-search">Search</label>
+            <input type="search" id="monitoring-search" class="form-control form-control-sm" placeholder="Search by name or endpoint" aria-label="Search services" />
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+            <label class="form-label" for="monitoring-sort">Sort by</label>
+            <select id="monitoring-sort" class="form-select form-select-sm">
+                <option value="Name">Name (A–Z)</option>
+                <option value="Name desc">Name (Z–A)</option>
+                <option value="LastCheckedAt desc">Last checked (newest)</option>
+                <option value="NextDueAt">Next check (soonest)</option>
+            </select>
+        </div>
+        <div class="col-12 col-xl-3 text-xl-end">
+            <small class="text-muted">Filters are saved in the address bar for easy sharing.</small>
+        </div>
+    </div>
+
+    <div id="monitoring-targets-container" class="row g-4" aria-live="polite"></div>
+
+    <nav class="d-flex justify-content-between align-items-center mt-4" aria-label="Monitoring pagination">
+        <button id="monitoring-prev-page" class="btn btn-outline-secondary btn-sm" type="button">
+            <i class="fa fa-chevron-left me-1"></i>
+            Previous
+        </button>
+        <div class="text-muted small" id="monitoring-page-info">&nbsp;</div>
+        <button id="monitoring-next-page" class="btn btn-outline-secondary btn-sm" type="button">
+            Next
+            <i class="fa fa-chevron-right ms-1"></i>
+        </button>
+    </nav>
+</div>
+
+<div class="modal fade" id="monitoring-outages-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="monitoring-outages-modal-title">Recent outages</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="table-responsive">
+                    <table class="table table-sm" id="monitoring-outages-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Started</th>
+                                <th scope="col">Ended</th>
+                                <th scope="col">Duration</th>
+                                <th scope="col">Failures</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <p class="text-muted small mb-0">Times are shown in your local timezone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="monitoring-manage-modal" tabindex="-1" aria-hidden="true" aria-labelledby="monitoring-manage-modal-title">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form id="monitoring-manage-form">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="monitoring-manage-modal-title">New service</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="monitoring-manage-errors" class="alert alert-danger d-none" role="alert"></div>
+                    <div class="row g-3">
+                        <div class="col-12 col-lg-6">
+                            <label class="form-label" for="monitoring-manage-name">Name</label>
+                            <input type="text" class="form-control" id="monitoring-manage-name" name="name" required minlength="2" maxlength="128" />
+                        </div>
+                        <div class="col-12 col-lg-6">
+                            <label class="form-label" for="monitoring-manage-type">Type</label>
+            <select id="monitoring-manage-type" name="type" class="form-select" required>
+                <option value="0">Website</option>
+                <option value="1">API</option>
+                <option value="2">TCP</option>
+                <option value="3">Redis</option>
+            </select>
+        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="monitoring-manage-endpoint">Endpoint</label>
+                            <input type="text" class="form-control" id="monitoring-manage-endpoint" name="endpoint" required maxlength="512" />
+                            <div class="form-text">For TCP/Redis targets, use host:port unless overridden in settings.</div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="monitoring-manage-settings">Settings (JSON)</label>
+                            <textarea class="form-control font-monospace" id="monitoring-manage-settings" name="settingsJson" rows="5" spellcheck="false" placeholder="{ }"></textarea>
+                            <div class="form-text">Leave blank to use defaults. The JSON is validated before saving.</div>
+                        </div>
+                        <div class="col-12 col-md-6 col-xl-3">
+                            <label class="form-label" for="monitoring-manage-interval">Check interval (seconds)</label>
+                            <input type="number" class="form-control" id="monitoring-manage-interval" name="checkIntervalSeconds" min="10" required />
+                        </div>
+                        <div class="col-12 col-md-6 col-xl-3">
+                            <label class="form-label" for="monitoring-manage-timeout">Timeout (seconds)</label>
+                            <input type="number" class="form-control" id="monitoring-manage-timeout" name="timeoutSeconds" min="1" required />
+                        </div>
+                        <div class="col-12 col-md-6 col-xl-3">
+                            <label class="form-label" for="monitoring-manage-retries">Max retries</label>
+                            <input type="number" class="form-control" id="monitoring-manage-retries" name="maxRetryAttempts" min="0" required />
+                        </div>
+                        <div class="col-12 col-md-6 col-xl-3">
+                            <label class="form-label" for="monitoring-manage-retry-delay">Retry delay (seconds)</label>
+                            <input type="number" class="form-control" id="monitoring-manage-retry-delay" name="retryDelaySeconds" min="1" required />
+                        </div>
+                        <div class="col-12 col-md-6 col-xl-4">
+                            <label class="form-label" for="monitoring-manage-category">Category</label>
+                            <input type="text" class="form-control" id="monitoring-manage-category" name="category" maxlength="100" />
+                        </div>
+                        <div class="col-12 col-md-6 col-xl-4 d-flex align-items-center">
+                            <div class="form-check mt-4">
+                                <input class="form-check-input" type="checkbox" id="monitoring-manage-is-active" name="isActive" checked />
+                                <label class="form-check-label" for="monitoring-manage-is-active">Active</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <span class="spinner-border spinner-border-sm align-middle me-2 d-none" role="status" aria-hidden="true"></span>
+                        <span data-role="submit-label">Save</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="monitoring-alert-policy-modal" tabindex="-1" aria-hidden="true" aria-labelledby="monitoring-alert-policy-modal-title">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="monitoring-alert-policy-form">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="monitoring-alert-policy-modal-title">Alert policy</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="monitoring-alert-policy-errors" class="alert alert-danger d-none" role="alert"></div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="monitoring-alert-policy-enabled" name="enabled">
+                        <label class="form-check-label" for="monitoring-alert-policy-enabled">Alerts enabled</label>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label" for="monitoring-alert-policy-notify-after">Notify after failures</label>
+                            <input type="number" class="form-control" id="monitoring-alert-policy-notify-after" name="notifyAfterFailures" min="1" required>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label" for="monitoring-alert-policy-repeat">Repeat every (minutes)</label>
+                            <input type="number" class="form-control" id="monitoring-alert-policy-repeat" name="repeatMinutes" min="1" required>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label" for="monitoring-alert-policy-recover">Recovery quiet period (minutes)</label>
+                            <input type="number" class="form-control" id="monitoring-alert-policy-recover" name="recoverQuietMinutes" min="0" required>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="monitoring-alert-policy-channels">Channels (JSON)</label>
+                            <textarea class="form-control font-monospace" id="monitoring-alert-policy-channels" name="channelsJson" rows="5" spellcheck="false" placeholder="{ }"></textarea>
+                            <div class="form-text">Example: { "email": ["ops@example.com"], "webhook": ["https://hooks.example"], "telegram": ["-100123"] }</div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" id="monitoring-alert-policy-suppress" name="suppressDuringMaintenance">
+                                <label class="form-check-label" for="monitoring-alert-policy-suppress">Suppress during maintenance windows</label>
+                            </div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="monitoring-alert-policy-target-id" name="targetId">
+                    <div class="mt-3 small text-muted" id="monitoring-alert-policy-inheritance"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <span class="spinner-border spinner-border-sm align-middle me-2 d-none" role="status" aria-hidden="true"></span>
+                        <span data-role="submit-label">Save</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="monitoring-maintenance-modal" tabindex="-1" aria-hidden="true" aria-labelledby="monitoring-maintenance-modal-title">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="monitoring-maintenance-modal-title">Maintenance windows</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="monitoring-maintenance-errors" class="alert alert-danger d-none" role="alert"></div>
+                <form id="monitoring-maintenance-form" class="border rounded p-3 mb-4">
+                    <h6 class="mb-3">Schedule maintenance</h6>
+                    <div class="row g-3 align-items-end">
+                        <div class="col-12 col-md-4">
+                            <label class="form-label" for="monitoring-maintenance-target">Target (optional)</label>
+                            <select id="monitoring-maintenance-target" name="targetId" class="form-select">
+                                <option value="">All services (global)</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label" for="monitoring-maintenance-start">Start (UTC)</label>
+                            <input type="datetime-local" class="form-control" id="monitoring-maintenance-start" name="startUtc" required>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label" for="monitoring-maintenance-end">End (UTC)</label>
+                            <input type="datetime-local" class="form-control" id="monitoring-maintenance-end" name="endUtc" required>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="monitoring-maintenance-reason">Reason</label>
+                            <input type="text" class="form-control" id="monitoring-maintenance-reason" name="reason" maxlength="256" placeholder="Optional">
+                        </div>
+                    </div>
+                    <div class="mt-3 text-end">
+                        <button type="submit" class="btn btn-primary btn-sm">
+                            <span class="spinner-border spinner-border-sm align-middle me-2 d-none" role="status" aria-hidden="true"></span>
+                            Schedule maintenance
+                        </button>
+                    </div>
+                </form>
+
+                <div class="table-responsive">
+                    <table class="table table-sm" id="monitoring-maintenance-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Start (UTC)</th>
+                                <th scope="col">End (UTC)</th>
+                                <th scope="col">Target</th>
+                                <th scope="col">Reason</th>
+                                <th scope="col" class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section scripts {
+    <abp-script src="~/js/monitoring.targets.js"></abp-script>
+    <script>
+        window.monitoringPermissions = {
+            canRun: @Model.CanRun.ToString().ToLowerInvariant(),
+            canEdit: @Model.CanEdit.ToString().ToLowerInvariant(),
+            canDelete: @Model.CanDelete.ToString().ToLowerInvariant(),
+            canCreate: @Model.CanCreate.ToString().ToLowerInvariant()
+        };
+
+        document.addEventListener('DOMContentLoaded', function () {
+            if (window.monitoringTargets) {
+                window.monitoringTargets.init({
+                    container: document.getElementById('monitoring-targets-container'),
+                    filterSelect: document.getElementById('monitoring-type-filter'),
+                    searchInput: document.getElementById('monitoring-search'),
+                    sortSelect: document.getElementById('monitoring-sort'),
+                    checkAllButton: document.getElementById('monitoring-check-all-button'),
+                    newButton: document.getElementById('monitoring-new-button'),
+                    outagesModal: document.getElementById('monitoring-outages-modal'),
+                    outagesModalTitle: document.getElementById('monitoring-outages-modal-title'),
+                    outagesTableBody: document.querySelector('#monitoring-outages-table tbody'),
+                    manageModal: document.getElementById('monitoring-manage-modal'),
+                    manageForm: document.getElementById('monitoring-manage-form'),
+                    manageErrors: document.getElementById('monitoring-manage-errors'),
+                    manageSubmitButton: document.querySelector('#monitoring-manage-form button[type="submit"]'),
+                    alertPolicyModal: document.getElementById('monitoring-alert-policy-modal'),
+                    alertPolicyForm: document.getElementById('monitoring-alert-policy-form'),
+                    alertPolicyErrors: document.getElementById('monitoring-alert-policy-errors'),
+                    alertPolicySubmit: document.querySelector('#monitoring-alert-policy-form button[type="submit"]'),
+                    alertPolicyInheritance: document.getElementById('monitoring-alert-policy-inheritance'),
+                    maintenanceButton: document.getElementById('monitoring-maintenance-button'),
+                    maintenanceModal: document.getElementById('monitoring-maintenance-modal'),
+                    maintenanceForm: document.getElementById('monitoring-maintenance-form'),
+                    maintenanceErrors: document.getElementById('monitoring-maintenance-errors'),
+                    maintenanceSubmit: document.querySelector('#monitoring-maintenance-form button[type="submit"]'),
+                    maintenanceTableBody: document.querySelector('#monitoring-maintenance-table tbody'),
+                    maintenanceTargetSelect: document.getElementById('monitoring-maintenance-target'),
+                    pageInfo: document.getElementById('monitoring-page-info'),
+                    prevButton: document.getElementById('monitoring-prev-page'),
+                    nextButton: document.getElementById('monitoring-next-page')
+                });
+            }
+        });
+    </script>
+}

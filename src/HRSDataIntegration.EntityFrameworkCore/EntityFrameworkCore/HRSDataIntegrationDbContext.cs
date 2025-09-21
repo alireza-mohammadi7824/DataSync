@@ -14,6 +14,8 @@ using Volo.Abp.SettingManagement.EntityFrameworkCore;
 using Volo.Abp.OpenIddict.EntityFrameworkCore;
 using Volo.Abp.TenantManagement;
 using Volo.Abp.TenantManagement.EntityFrameworkCore;
+using Monitoring;
+using Monitoring.Targets;
 using HRSDataIntegration.DTOs.Chart;
 using HRSDataIntegration.DTOs.Personeli;
 using HRSDataIntegration.DTOs;
@@ -59,6 +61,14 @@ public class HRSDataIntegrationDbContext :
     // Tenant Management
     public DbSet<Tenant> Tenants { get; set; }
     public DbSet<TenantConnectionString> TenantConnectionStrings { get; set; }
+
+    #region Monitoring
+    public DbSet<MonitoringTarget> MonitoringTargets { get; set; }
+    public DbSet<AlertPolicy> MonitoringAlertPolicies { get; set; }
+    public DbSet<MaintenanceWindow> MonitoringMaintenanceWindows { get; set; }
+    public DbSet<ServiceStatusHistory> ServiceStatusHistories { get; set; }
+    public DbSet<OutageWindow> OutageWindows { get; set; }
+    #endregion Monitoring
     #region Job
     public DbSet<Job> Job { get; set; }
     public DbSet<JobDetail> JobDetail { get; set; }
@@ -210,6 +220,80 @@ public class HRSDataIntegrationDbContext :
         .ToTable("OrganizationChartNodeDiagram", schema: "OrganChart");
         builder.Entity<OrganizationChartNodeDiagramPointArray>()
         .ToTable("OrganizationChartNodeDiagramPointArray", schema: "OrganChart");
+
+        builder.Entity<MonitoringTarget>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "Targets", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.Name).IsRequired().HasMaxLength(MonitoringTargetConsts.NameMaxLength);
+            b.Property(x => x.Type).HasConversion<int>();
+            b.Property(x => x.Endpoint).IsRequired().HasMaxLength(MonitoringTargetConsts.EndpointMaxLength);
+            b.Property(x => x.SettingsJson).HasMaxLength(MonitoringTargetConsts.SettingsJsonMaxLength);
+            b.Property(x => x.Category).HasMaxLength(MonitoringTargetConsts.CategoryMaxLength);
+            b.Property(x => x.CurrentStatus).HasConversion<int>();
+            b.HasIndex(x => x.IsActive);
+            b.HasIndex(x => new { x.IsActive, x.NextDueAt })
+                .HasDatabaseName("IX_MonitoringTargets_IsActive_NextDueAt");
+            b.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        builder.Entity<AlertPolicy>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "AlertPolicies", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.ChannelsJson).HasMaxLength(AlertPolicyConsts.ChannelsJsonMaxLength);
+            b.HasIndex(x => x.TargetId).IsUnique();
+            b.HasOne<MonitoringTarget>()
+                .WithOne()
+                .HasForeignKey<AlertPolicy>(x => x.TargetId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<MaintenanceWindow>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "Maintenance", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.Reason).HasMaxLength(MaintenanceWindowConsts.ReasonMaxLength);
+            b.HasIndex(x => new { x.TargetId, x.StartUtc, x.EndUtc })
+                .HasDatabaseName("IX_Target_Start_End");
+            b.HasOne<MonitoringTarget>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<ServiceStatusHistory>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "StatusHistory", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.FromStatus).HasConversion<int>();
+            b.Property(x => x.ToStatus).HasConversion<int>();
+            b.Property(x => x.TriggerSource).IsRequired().HasMaxLength(MonitoringHistoryConsts.TriggerSourceMaxLength);
+            b.Property(x => x.ErrorSummary).HasMaxLength(MonitoringHistoryConsts.ErrorSummaryMaxLength);
+            b.HasIndex(x => new { x.TargetId, x.ChangedAt })
+                .HasDatabaseName("IX_Target_ChangedAt")
+                .IsDescending(true, true);
+            b.HasOne<MonitoringTarget>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<OutageWindow>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "Outages", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.FailureCount).IsRequired();
+            b.Property(x => x.LastAlertAt);
+            b.Property(x => x.AlertsSent).HasDefaultValue(0);
+            b.HasIndex(x => new { x.TargetId, x.StartedAt })
+                .HasDatabaseName("IX_Target_StartedAt")
+                .IsDescending(true, true);
+            b.HasOne<MonitoringTarget>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
 
 
 

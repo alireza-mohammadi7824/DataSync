@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\HRSDataIntegration.Application.Contracts\HRSDataIntegration.Application.Contracts.csproj" />
     <ProjectReference Include="..\HRSDataIntegration.Domain\HRSDataIntegration.Domain.csproj" />
+    <ProjectReference Include="..\Monitoring.Domain\Monitoring.Domain.csproj" />
   </ItemGroup>
 
   <ItemGroup>
