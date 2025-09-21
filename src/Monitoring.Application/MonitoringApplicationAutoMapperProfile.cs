@@ -8,5 +8,7 @@ public class MonitoringApplicationAutoMapperProfile : Profile
     public MonitoringApplicationAutoMapperProfile()
     {
         CreateMap<MonitoringTarget, MonitoringTargetDto>();
+        CreateMap<ServiceStatusHistory, ServiceStatusHistoryDto>();
+        CreateMap<OutageWindow, OutageWindowDto>();
     }
 }

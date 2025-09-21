@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Monitoring.HealthChecks;
 using Monitoring.Targets;
 using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Guids;
 using Volo.Abp.Timing;
 using Volo.Abp.Uow;
 
@@ -19,22 +20,31 @@ public class MonitoringWorker : BackgroundService
 
     private readonly ILogger<MonitoringWorker> _logger;
     private readonly IRepository<MonitoringTarget, Guid> _targetRepository;
+    private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
+    private readonly IRepository<OutageWindow, Guid> _outageRepository;
     private readonly IHealthCheckProviderResolver _providerResolver;
     private readonly IClock _clock;
     private readonly IUnitOfWorkManager _unitOfWorkManager;
+    private readonly IGuidGenerator _guidGenerator;
 
     public MonitoringWorker(
         ILogger<MonitoringWorker> logger,
         IRepository<MonitoringTarget, Guid> targetRepository,
+        IRepository<ServiceStatusHistory, Guid> historyRepository,
+        IRepository<OutageWindow, Guid> outageRepository,
         IHealthCheckProviderResolver providerResolver,
         IClock clock,
-        IUnitOfWorkManager unitOfWorkManager)
+        IUnitOfWorkManager unitOfWorkManager,
+        IGuidGenerator guidGenerator)
     {
         _logger = logger;
         _targetRepository = targetRepository;
+        _historyRepository = historyRepository;
+        _outageRepository = outageRepository;
         _providerResolver = providerResolver;
         _clock = clock;
         _unitOfWorkManager = unitOfWorkManager;
+        _guidGenerator = guidGenerator;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -95,7 +105,14 @@ public class MonitoringWorker : BackgroundService
         using var uow = _unitOfWorkManager.Begin(requiresNew: true, isTransactional: false);
 
         var recordedAt = _clock.Now;
-        MonitoringTargetCheckProcessor.ApplyResult(target, result, recordedAt);
+        await MonitoringTargetCheckProcessor.ApplyResultAsync(
+            target,
+            result,
+            recordedAt,
+            _historyRepository,
+            _outageRepository,
+            _guidGenerator,
+            cancellationToken);
 
         await _targetRepository.UpdateAsync(target, autoSave: true, cancellationToken: cancellationToken);
         await uow.CompleteAsync();

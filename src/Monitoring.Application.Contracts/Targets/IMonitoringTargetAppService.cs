@@ -18,4 +18,10 @@ public interface IMonitoringTargetAppService :
     Task<HealthCheckResultDto> CheckNowAsync(Guid id);
 
     Task<List<HealthCheckResultDto>> CheckAllAsync();
+
+    Task<int> CheckAllNowAsync();
+
+    Task<List<OutageWindowDto>> GetRecentOutagesAsync(Guid targetId, int count = 10);
+
+    Task<List<ServiceStatusHistoryDto>> GetRecentStatusHistoryAsync(Guid targetId, int count = 20);
 }

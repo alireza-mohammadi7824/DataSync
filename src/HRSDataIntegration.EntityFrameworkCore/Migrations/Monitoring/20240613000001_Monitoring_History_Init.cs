@@ -2,16 +2,96 @@ using System;
 using HRSDataIntegration.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace HRSDataIntegration.Migrations;
+namespace HRSDataIntegration.Migrations.Monitoring;
 
 [DbContext(typeof(HRSDataIntegrationDbContext))]
-partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
+[Migration("20240613000001_Monitoring_History_Init")]
+public partial class Monitoring_History_Init : Migration
 {
-    protected override void BuildModel(ModelBuilder modelBuilder)
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.CreateTable(
+            name: "MonitoringStatusHistory",
+            columns: table => new
+            {
+                Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                TargetId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                FromStatus = table.Column<int>(type: "int", nullable: false),
+                ToStatus = table.Column<int>(type: "int", nullable: false),
+                ChangedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                TriggerSource = table.Column<string>(type: "nvarchar(32)", maxLength: 32, nullable: false),
+                ResponseTimeMs = table.Column<int>(type: "int", nullable: true),
+                ErrorSummary = table.Column<string>(type: "nvarchar(512)", maxLength: 512, nullable: true)
+            },
+            constraints: table =>
+            {
+                table.PrimaryKey("PK_MonitoringStatusHistory", x => x.Id);
+                table.ForeignKey(
+                    name: "FK_MonitoringStatusHistory_MonitoringTargets_TargetId",
+                    column: x => x.TargetId,
+                    principalTable: "MonitoringTargets",
+                    principalColumn: "Id",
+                    onDelete: ReferentialAction.Restrict);
+            });
+
+        migrationBuilder.CreateTable(
+            name: "MonitoringOutages",
+            columns: table => new
+            {
+                Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                TargetId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                StartedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                EndedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                FailureCount = table.Column<int>(type: "int", nullable: false),
+                TotalDurationSec = table.Column<int>(type: "int", nullable: true)
+            },
+            constraints: table =>
+            {
+                table.PrimaryKey("PK_MonitoringOutages", x => x.Id);
+                table.ForeignKey(
+                    name: "FK_MonitoringOutages_MonitoringTargets_TargetId",
+                    column: x => x.TargetId,
+                    principalTable: "MonitoringTargets",
+                    principalColumn: "Id",
+                    onDelete: ReferentialAction.Restrict);
+            });
+
+        migrationBuilder.CreateIndex(
+            name: "IX_Target_ChangedAt",
+            table: "MonitoringStatusHistory",
+            columns: new[] { "TargetId", "ChangedAt" },
+            descending: new[] { true, true });
+
+        migrationBuilder.CreateIndex(
+            name: "IX_Target_StartedAt",
+            table: "MonitoringOutages",
+            columns: new[] { "TargetId", "StartedAt" },
+            descending: new[] { true, true });
+
+        migrationBuilder.CreateIndex(
+            name: "IX_MonitoringTargets_IsActive_NextDueAt",
+            table: "MonitoringTargets",
+            columns: new[] { "IsActive", "NextDueAt" });
+    }
+
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.DropIndex(
+            name: "IX_MonitoringTargets_IsActive_NextDueAt",
+            table: "MonitoringTargets");
+
+        migrationBuilder.DropTable(
+            name: "MonitoringStatusHistory");
+
+        migrationBuilder.DropTable(
+            name: "MonitoringOutages");
+    }
+
+    protected override void BuildTargetModel(ModelBuilder modelBuilder)
     {
         modelBuilder
             .HasAnnotation("ProductVersion", "8.0.4");

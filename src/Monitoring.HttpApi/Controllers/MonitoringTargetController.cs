@@ -35,6 +35,20 @@ public class MonitoringTargetController : MonitoringController
         return _monitoringTargetAppService.GetAsync(id);
     }
 
+    [HttpGet]
+    [Route("{id}/outages")]
+    public virtual Task<List<OutageWindowDto>> GetRecentOutagesAsync(Guid id, [FromQuery] int count = 10)
+    {
+        return _monitoringTargetAppService.GetRecentOutagesAsync(id, count);
+    }
+
+    [HttpGet]
+    [Route("{id}/history")]
+    public virtual Task<List<ServiceStatusHistoryDto>> GetRecentStatusHistoryAsync(Guid id, [FromQuery] int count = 20)
+    {
+        return _monitoringTargetAppService.GetRecentStatusHistoryAsync(id, count);
+    }
+
     [HttpPost]
     [Authorize(MonitoringPermissions.Services.Create)]
     public virtual Task<MonitoringTargetDto> CreateAsync(CreateUpdateMonitoringTargetDto input)
@@ -80,5 +94,13 @@ public class MonitoringTargetController : MonitoringController
     public virtual Task<List<HealthCheckResultDto>> CheckAllAsync()
     {
         return _monitoringTargetAppService.CheckAllAsync();
+    }
+
+    [HttpPost]
+    [Route("~/api/monitoring/check-all")]
+    [Authorize(MonitoringPermissions.Services.Run)]
+    public virtual Task<int> CheckAllNowAsync()
+    {
+        return _monitoringTargetAppService.CheckAllNowAsync();
     }
 }

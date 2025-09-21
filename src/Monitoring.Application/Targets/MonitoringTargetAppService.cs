@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
@@ -8,8 +9,9 @@ using Monitoring.HealthChecks;
 using Monitoring.Permissions;
 using Volo.Abp.Application.Dtos;
 using Volo.Abp.Application.Services;
-using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Authorization;
+using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Guids;
 
 namespace Monitoring.Targets;
 
@@ -21,13 +23,22 @@ public class MonitoringTargetAppService :
     private const string BulkTriggerSource = "api";
 
     private readonly IHealthCheckProviderResolver _providerResolver;
+    private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
+    private readonly IRepository<OutageWindow, Guid> _outageRepository;
+    private readonly IGuidGenerator _guidGenerator;
 
     public MonitoringTargetAppService(
         IRepository<MonitoringTarget, Guid> repository,
-        IHealthCheckProviderResolver providerResolver)
+        IHealthCheckProviderResolver providerResolver,
+        IRepository<ServiceStatusHistory, Guid> historyRepository,
+        IRepository<OutageWindow, Guid> outageRepository,
+        IGuidGenerator guidGenerator)
         : base(repository)
     {
         _providerResolver = providerResolver;
+        _historyRepository = historyRepository;
+        _outageRepository = outageRepository;
+        _guidGenerator = guidGenerator;
         GetPolicyName = MonitoringPermissions.Services.View;
         GetListPolicyName = MonitoringPermissions.Services.View;
         CreatePolicyName = MonitoringPermissions.Services.Create;
@@ -90,7 +101,7 @@ public class MonitoringTargetAppService :
 
         var now = Clock.Now;
         entity.SetLastCheckedAt(now);
-        entity.SetNextDueAt(now.AddSeconds(entity.CheckIntervalSeconds));
+        entity.SetNextDueAt(now);
         entity.SetCurrentStatus(ServiceStatus.Checking);
         entity.SetLastStatusChangeAt(now);
         entity.SetConsecutiveFailures(0);
@@ -132,6 +143,63 @@ public class MonitoringTargetAppService :
         return results;
     }
 
+    public async Task<int> CheckAllNowAsync()
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
+
+        var targets = await Repository.GetListAsync(target => target.IsActive);
+        var now = Clock.Now;
+
+        foreach (var target in targets)
+        {
+            if (target.CurrentStatus != ServiceStatus.Checking)
+            {
+                target.SetCurrentStatus(ServiceStatus.Checking);
+                target.SetLastStatusChangeAt(now);
+            }
+
+            target.SetLastCheckedAt(now);
+            target.SetNextDueAt(now);
+            target.SetConsecutiveFailures(0);
+
+            await Repository.UpdateAsync(target, autoSave: true);
+        }
+
+        return targets.Count;
+    }
+
+    public async Task<List<OutageWindowDto>> GetRecentOutagesAsync(Guid targetId, int count = 10)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
+
+        var normalizedCount = Math.Clamp(count, 1, 100);
+        var queryable = await _outageRepository.GetQueryableAsync();
+
+        var outages = await AsyncExecuter.ToListAsync(
+            queryable
+                .Where(x => x.TargetId == targetId)
+                .OrderByDescending(x => x.StartedAt)
+                .Take(normalizedCount));
+
+        return ObjectMapper.Map<List<OutageWindow>, List<OutageWindowDto>>(outages);
+    }
+
+    public async Task<List<ServiceStatusHistoryDto>> GetRecentStatusHistoryAsync(Guid targetId, int count = 20)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
+
+        var normalizedCount = Math.Clamp(count, 1, 200);
+        var queryable = await _historyRepository.GetQueryableAsync();
+
+        var history = await AsyncExecuter.ToListAsync(
+            queryable
+                .Where(x => x.TargetId == targetId)
+                .OrderByDescending(x => x.ChangedAt)
+                .Take(normalizedCount));
+
+        return ObjectMapper.Map<List<ServiceStatusHistory>, List<ServiceStatusHistoryDto>>(history);
+    }
+
     private async Task<(HealthCheckResult Result, DateTime Timestamp)> ExecuteCheckAsync(
         MonitoringTarget target,
         string triggerSource,
@@ -150,7 +218,14 @@ public class MonitoringTargetAppService :
         }
 
         var timestamp = Clock.Now;
-        MonitoringTargetCheckProcessor.ApplyResult(target, result, timestamp);
+        await MonitoringTargetCheckProcessor.ApplyResultAsync(
+            target,
+            result,
+            timestamp,
+            _historyRepository,
+            _outageRepository,
+            _guidGenerator,
+            cancellationToken);
 
         return (result, timestamp);
     }

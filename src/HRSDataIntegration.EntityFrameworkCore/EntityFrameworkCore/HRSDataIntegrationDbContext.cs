@@ -64,6 +64,8 @@ public class HRSDataIntegrationDbContext :
 
     #region Monitoring
     public DbSet<MonitoringTarget> MonitoringTargets { get; set; }
+    public DbSet<ServiceStatusHistory> ServiceStatusHistories { get; set; }
+    public DbSet<OutageWindow> OutageWindows { get; set; }
     #endregion Monitoring
     #region Job
     public DbSet<Job> Job { get; set; }
@@ -228,7 +230,40 @@ public class HRSDataIntegrationDbContext :
             b.Property(x => x.Category).HasMaxLength(MonitoringTargetConsts.CategoryMaxLength);
             b.Property(x => x.CurrentStatus).HasConversion<int>();
             b.HasIndex(x => x.IsActive);
+            b.HasIndex(x => new { x.IsActive, x.NextDueAt })
+                .HasDatabaseName("IX_MonitoringTargets_IsActive_NextDueAt");
             b.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        builder.Entity<ServiceStatusHistory>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "StatusHistory", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.FromStatus).HasConversion<int>();
+            b.Property(x => x.ToStatus).HasConversion<int>();
+            b.Property(x => x.TriggerSource).IsRequired().HasMaxLength(MonitoringHistoryConsts.TriggerSourceMaxLength);
+            b.Property(x => x.ErrorSummary).HasMaxLength(MonitoringHistoryConsts.ErrorSummaryMaxLength);
+            b.HasIndex(x => new { x.TargetId, x.ChangedAt })
+                .HasDatabaseName("IX_Target_ChangedAt")
+                .IsDescending(true, true);
+            b.HasOne<MonitoringTarget>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<OutageWindow>(b =>
+        {
+            b.ToTable(MonitoringConsts.DbTablePrefix + "Outages", MonitoringConsts.DbSchema);
+            b.ConfigureByConvention();
+            b.Property(x => x.FailureCount).IsRequired();
+            b.HasIndex(x => new { x.TargetId, x.StartedAt })
+                .HasDatabaseName("IX_Target_StartedAt")
+                .IsDescending(true, true);
+            b.HasOne<MonitoringTarget>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
 
