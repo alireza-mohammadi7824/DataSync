@@ -14,20 +14,17 @@ public sealed class EmailNotificationChannel : INotificationChannel
     private readonly IEmailSender _emailSender;
     private readonly ILogger<EmailNotificationChannel> _logger;
     private readonly IReadOnlyList<string> _recipients;
-    private readonly string? _fromAddress;
     private readonly string _subjectPrefix;
 
     public EmailNotificationChannel(
         IEmailSender emailSender,
         ILogger<EmailNotificationChannel> logger,
         IReadOnlyList<string> recipients,
-        string? fromAddress,
         string subjectPrefix)
     {
         _emailSender = emailSender;
         _logger = logger;
         _recipients = recipients;
-        _fromAddress = fromAddress;
         _subjectPrefix = subjectPrefix ?? string.Empty;
     }
 
@@ -51,18 +48,7 @@ public sealed class EmailNotificationChannel : INotificationChannel
 
             try
             {
-                if (_fromAddress.IsNullOrWhiteSpace())
-                {
-                    await _emailSender.SendAsync(recipient, subject, body);
-                }
-                else
-                {
-                    await _emailSender.SendAsync(new EmailMessage(
-                        fromAddress: _fromAddress!,
-                        to: recipient,
-                        subject: subject,
-                        body: body));
-                }
+                await _emailSender.SendAsync(recipient, subject, body);
             }
             catch (Exception ex)
             {

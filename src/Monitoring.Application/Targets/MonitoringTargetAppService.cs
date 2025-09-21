@@ -105,10 +105,11 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         {
             var now = Clock.Now;
             var targetIds = dtos.Select(x => x.Id).ToList();
+            var maintenanceQueryable = await _maintenanceRepository.GetQueryableAsync();
             var activeWindows = await AsyncExecuter.ToListAsync(
-                _maintenanceRepository.Where(
-                    window => window.StartUtc <= now && window.EndUtc >= now &&
-                              (window.TargetId == null || targetIds.Contains(window.TargetId.Value))));
+                maintenanceQueryable
+                    .Where(window => window.StartUtc <= now && window.EndUtc >= now)
+                    .Where(window => window.TargetId == null || targetIds.Contains(window.TargetId.Value)));
 
             var hasGlobal = activeWindows.Any(window => window.TargetId == null);
             var targeted = new HashSet<Guid>(activeWindows.Where(window => window.TargetId.HasValue).Select(window => window.TargetId!.Value));
@@ -301,10 +302,11 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         {
             var now = Clock.Now;
             var ids = dtos.Select(x => x.Id).ToList();
+            var maintenanceQueryable = await _maintenanceRepository.GetQueryableAsync();
             var activeWindows = await AsyncExecuter.ToListAsync(
-                _maintenanceRepository.Where(
-                    window => window.StartUtc <= now && window.EndUtc >= now &&
-                              (window.TargetId == null || ids.Contains(window.TargetId.Value))));
+                maintenanceQueryable
+                    .Where(window => window.StartUtc <= now && window.EndUtc >= now)
+                    .Where(window => window.TargetId == null || ids.Contains(window.TargetId.Value)));
 
             var hasGlobal = activeWindows.Any(window => window.TargetId == null);
             var targeted = new HashSet<Guid>(activeWindows.Where(window => window.TargetId.HasValue).Select(window => window.TargetId!.Value));

@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\HRSDataIntegration.Application\HRSDataIntegration.Application.csproj" />
+    <ProjectReference Include="..\..\src\Monitoring.Application\Monitoring.Application.csproj" />
+    <ProjectReference Include="..\..\src\Monitoring.Domain\Monitoring.Domain.csproj" />
     <ProjectReference Include="..\HRSDataIntegration.Domain.Tests\HRSDataIntegration.Domain.Tests.csproj" />
   </ItemGroup>
 

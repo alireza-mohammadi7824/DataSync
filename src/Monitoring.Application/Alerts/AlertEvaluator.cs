@@ -23,7 +23,7 @@ internal static class AlertEvaluator
             {
                 if (input.ConsecutiveFailures >= input.NotifyAfterFailures)
                 {
-                    return new AlertEvaluationResult(AlertEventType.Down, input.ActiveOutage, shouldRecordAlert: true);
+                    return AlertEvaluationResult.From(AlertEventType.Down, input.ActiveOutage, shouldRecordAlert: true);
                 }
 
                 return AlertEvaluationResult.None;
@@ -39,7 +39,7 @@ internal static class AlertEvaluator
                 // This covers the case when retries delayed the first alert.
                 if (input.ConsecutiveFailures >= input.NotifyAfterFailures)
                 {
-                    return new AlertEvaluationResult(AlertEventType.Down, input.ActiveOutage, shouldRecordAlert: true);
+                    return AlertEvaluationResult.From(AlertEventType.Down, input.ActiveOutage, shouldRecordAlert: true);
                 }
 
                 return AlertEvaluationResult.None;
@@ -48,7 +48,7 @@ internal static class AlertEvaluator
             var nextAllowed = input.ActiveOutage.LastAlertAt.Value.AddMinutes(input.RepeatMinutes);
             if (input.Timestamp >= nextAllowed)
             {
-                return new AlertEvaluationResult(AlertEventType.StillDown, input.ActiveOutage, shouldRecordAlert: true);
+                return AlertEvaluationResult.From(AlertEventType.StillDown, input.ActiveOutage, shouldRecordAlert: true);
             }
 
             return AlertEvaluationResult.None;
@@ -58,19 +58,19 @@ internal static class AlertEvaluator
         {
             if (input.RecoverQuietMinutes <= 0)
             {
-                return new AlertEvaluationResult(AlertEventType.Recovered, input.ClosedOutage, shouldRecordAlert: false);
+                return AlertEvaluationResult.From(AlertEventType.Recovered, input.ClosedOutage, shouldRecordAlert: false);
             }
 
             var lastUp = input.PreviousLastUpAt;
             if (!lastUp.HasValue)
             {
-                return new AlertEvaluationResult(AlertEventType.Recovered, input.ClosedOutage, shouldRecordAlert: false);
+                return AlertEvaluationResult.From(AlertEventType.Recovered, input.ClosedOutage, shouldRecordAlert: false);
             }
 
             var quietThreshold = lastUp.Value.AddMinutes(input.RecoverQuietMinutes);
             if (input.Timestamp >= quietThreshold)
             {
-                return new AlertEvaluationResult(AlertEventType.Recovered, input.ClosedOutage, shouldRecordAlert: false);
+                return AlertEvaluationResult.From(AlertEventType.Recovered, input.ClosedOutage, shouldRecordAlert: false);
             }
         }
 
@@ -135,10 +135,8 @@ internal readonly struct AlertEvaluationResult
     public OutageWindow? Outage { get; }
     public bool ShouldRecordAlert { get; }
 
-    public static AlertEvaluationResult None => new(null, null, false);
+    public static AlertEvaluationResult None { get; } = new(null, null, false);
 
-    public AlertEvaluationResult(AlertEventType eventType, OutageWindow? outage, bool shouldRecordAlert)
-        : this(eventType, outage, shouldRecordAlert)
-    {
-    }
+    public static AlertEvaluationResult From(AlertEventType eventType, OutageWindow? outage, bool shouldRecordAlert)
+        => new(eventType, outage, shouldRecordAlert);
 }

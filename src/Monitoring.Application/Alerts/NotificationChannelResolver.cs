@@ -106,7 +106,6 @@ public sealed class NotificationChannelResolver : INotificationChannelResolver
             _emailSender,
             logger,
             recipients,
-            _options.Notifications.Email.FromAddress,
             _options.Notifications.Email.SubjectPrefix ?? string.Empty);
 
         return new NotificationChannelDescriptor("email", channel);
