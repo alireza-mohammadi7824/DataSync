@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\HRSDataIntegration.EntityFrameworkCore\HRSDataIntegration.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\..\src\Monitoring.Application\Monitoring.Application.csproj" />
+    <ProjectReference Include="..\..\src\Monitoring.Domain\Monitoring.Domain.csproj" />
     <ProjectReference Include="..\HRSDataIntegration.Application.Tests\HRSDataIntegration.Application.Tests.csproj" />
   </ItemGroup>
 

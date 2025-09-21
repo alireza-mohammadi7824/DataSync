@@ -19,6 +19,8 @@
     <PackageReference Include="Volo.Abp.AspNetCore.TestBase" Version="8.3.1" />
     <ProjectReference Include="..\HRSDataIntegration.Application.Tests\HRSDataIntegration.Application.Tests.csproj" />
     <ProjectReference Include="..\..\src\HRSDataIntegration.Web\HRSDataIntegration.Web.csproj" />
+    <ProjectReference Include="..\..\src\Monitoring.Web\Monitoring.Web.csproj" />
+    <ProjectReference Include="..\..\src\Monitoring.Application\Monitoring.Application.csproj" />
     <ProjectReference Include="..\HRSDataIntegration.EntityFrameworkCore.Tests\HRSDataIntegration.EntityFrameworkCore.Tests.csproj" />
   </ItemGroup>
 
