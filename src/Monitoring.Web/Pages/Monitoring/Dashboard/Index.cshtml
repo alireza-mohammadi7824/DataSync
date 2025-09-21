@@ -1,0 +1,175 @@
+@page
+@model Monitoring.Web.Pages.Monitoring.Dashboard.IndexModel
+@{
+    ViewData["Title"] = "Monitoring Dashboard";
+}
+
+<style>
+    .dashboard-card {
+        border-radius: .75rem;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        padding: 1.5rem;
+        background: #fff;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+        min-height: 8rem;
+    }
+
+    .dashboard-card h2 {
+        font-size: 2.25rem;
+        font-weight: 600;
+    }
+
+    .dashboard-toolbar .btn {
+        min-width: 8rem;
+    }
+
+    .chart-container {
+        position: relative;
+        min-height: 320px;
+    }
+</style>
+
+<div class="container-fluid" id="monitoring-dashboard" data-default-range="@Model.DefaultRangeDays" data-max-range="@Model.MaxRangeDays">
+    <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3 mb-4">
+        <div>
+            <h1 class="mb-1">Monitoring Dashboard</h1>
+            <p class="text-muted mb-0">Insights across monitored targets, uptime trends, and incidents.</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2 dashboard-toolbar">
+            <button id="dashboard-export-uptime" class="btn btn-outline-primary btn-sm" type="button">
+                <i class="fa fa-download me-1"></i>
+                Export uptime CSV
+            </button>
+            <button id="dashboard-export-incidents" class="btn btn-outline-secondary btn-sm" type="button">
+                <i class="fa fa-file-text-o me-1"></i>
+                Export incidents CSV
+            </button>
+        </div>
+    </div>
+
+    <div class="row g-3 align-items-end mb-4" id="dashboard-filters">
+        <div class="col-12 col-lg-3">
+            <label class="form-label" for="dashboard-range-start">From</label>
+            <input id="dashboard-range-start" class="form-control form-control-sm" type="datetime-local" aria-describedby="dashboard-range-help" />
+        </div>
+        <div class="col-12 col-lg-3">
+            <label class="form-label" for="dashboard-range-end">To</label>
+            <input id="dashboard-range-end" class="form-control form-control-sm" type="datetime-local" aria-describedby="dashboard-range-help" />
+        </div>
+        <div class="col-12 col-lg-2">
+            <label class="form-label" for="dashboard-type-filter">Service type</label>
+            <select id="dashboard-type-filter" class="form-select form-select-sm">
+                <option value="all">All</option>
+                <option value="Website">Website</option>
+                <option value="Api">API</option>
+                <option value="Tcp">TCP</option>
+                <option value="Redis">Redis</option>
+            </select>
+        </div>
+        <div class="col-12 col-lg-3">
+            <label class="form-label" for="dashboard-target-picker">Target</label>
+            <select id="dashboard-target-picker" class="form-select form-select-sm">
+                <option value="all">All targets</option>
+            </select>
+        </div>
+        <div class="col-12 col-lg-1 d-flex align-items-end">
+            <button id="dashboard-apply" class="btn btn-primary btn-sm w-100" type="button">Apply</button>
+        </div>
+        <div class="col-12">
+            <small id="dashboard-range-help" class="text-muted">Maximum range: @Model.MaxRangeDays days. Times shown in your local timezone.</small>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4" id="dashboard-summary">
+        <div class="col-12 col-lg-3">
+            <div class="dashboard-card h-100">
+                <p class="text-muted mb-1">Total targets</p>
+                <h2 id="dashboard-total-targets">0</h2>
+                <span class="text-muted small">Across all service types</span>
+            </div>
+        </div>
+        <div class="col-12 col-lg-3">
+            <div class="dashboard-card h-100">
+                <p class="text-muted mb-1">Online</p>
+                <h2 id="dashboard-online">0</h2>
+                <span class="text-success small">Healthy checks</span>
+            </div>
+        </div>
+        <div class="col-12 col-lg-3">
+            <div class="dashboard-card h-100">
+                <p class="text-muted mb-1">Offline</p>
+                <h2 id="dashboard-offline">0</h2>
+                <span class="text-danger small">Requires attention</span>
+            </div>
+        </div>
+        <div class="col-12 col-lg-3">
+            <div class="dashboard-card h-100">
+                <p class="text-muted mb-1">Uptime</p>
+                <h2 id="dashboard-uptime">100%</h2>
+                <span class="text-muted small">Incidents <span id="dashboard-incidents-count">0</span> · Checking <span id="dashboard-checking">0</span></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-5">
+        <div class="col-12 col-xl-7">
+            <div class="dashboard-card h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">Uptime trend</h5>
+                    <div>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" data-range="24">24h</button>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" data-range="7">7d</button>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" data-range="30">30d</button>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="dashboard-uptime-chart" role="img" aria-label="Uptime trend"></canvas>
+                </div>
+                <small class="text-muted d-block mt-2">Bucketed by hour or day depending on the selected range.</small>
+            </div>
+        </div>
+        <div class="col-12 col-xl-5">
+            <div class="dashboard-card h-100">
+                <h5 class="mb-3">Recent incidents</h5>
+                <div class="table-responsive" style="max-height: 320px;">
+                    <table class="table table-sm mb-0" id="dashboard-incidents-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col">Started</th>
+                                <th scope="col">Ended</th>
+                                <th scope="col">Duration</th>
+                                <th scope="col">Failures</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="text-muted">
+                                <td colspan="4">No incidents in range.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <small class="text-muted d-block mt-2">Showing up to 50 incidents for the selected target.</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-5">
+        <div class="col-12 col-xl-6">
+            <div class="dashboard-card h-100">
+                <h5 class="mb-3">Reliability (MTTR/MTBF)</h5>
+                <div id="dashboard-reliability" class="small text-muted">Loading…</div>
+            </div>
+        </div>
+        <div class="col-12 col-xl-6">
+            <div class="dashboard-card h-100">
+                <h5 class="mb-3">Notes</h5>
+                <p class="text-muted mb-0 small">Data reflects UTC timestamps translated to your local browser timezone. Exported CSV files use ISO 8601 timestamps.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-1+NEnNh4tW7x1YgnSUZXoqBYwygJyI072QtdgQXl3k5iADG7n2AFDzy83H8XTurT" crossorigin="anonymous"></script>
+    <script src="~/js/monitoring.dashboard.js"></script>
+}
