@@ -3,7 +3,7 @@ using System.Globalization;
 
 namespace Monitoring.HealthChecks;
 
-internal static class EndpointParser
+public static class EndpointParser
 {
     public static bool TryParseHostPort(string? value, out string host, out int port)
     {
