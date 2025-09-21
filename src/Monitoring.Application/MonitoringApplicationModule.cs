@@ -1,8 +1,8 @@
-using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Monitoring.HealthChecks;
 using Monitoring.Workers;
+using Volo.Abp;
 using Volo.Abp.AutoMapper;
 using Volo.Abp.Authorization;
 using Volo.Abp.BackgroundWorkers;
@@ -28,6 +28,7 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddTransient<TcpCheckProvider>();
         context.Services.AddTransient<RedisCheckProvider>();
         context.Services.AddTransient<IHealthCheckProviderResolver, HealthCheckProviderResolver>();
+        context.Services.AddHostedService<AbpBackgroundWorkerAdapter<MonitoringWorker>>();
 
         Configure<AbpAutoMapperOptions>(options =>
         {
@@ -35,8 +36,7 @@ public class MonitoringApplicationModule : AbpModule
         });
     }
 
-    public override async Task OnApplicationInitializationAsync(ApplicationInitializationContext context)
+    public override void OnApplicationInitialization(ApplicationInitializationContext context)
     {
-        await context.AddBackgroundWorkerAsync<MonitoringWorker>();
     }
 }

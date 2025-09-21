@@ -10,7 +10,6 @@ using Volo.Abp.DependencyInjection;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Timing;
 using Volo.Abp.Uow;
-using Volo.Abp.Data;
 using Volo.Abp.Threading;
 
 namespace Monitoring.Workers;
@@ -18,9 +17,6 @@ namespace Monitoring.Workers;
 public class MonitoringWorker : AsyncPeriodicBackgroundWorkerBase, ISingletonDependency
 {
     private const string TriggerSource = "worker";
-    private const string LastResponseTimePropertyName = "Monitoring:LastResponseTimeMs";
-    private const string LastErrorSummaryPropertyName = "Monitoring:LastErrorSummary";
-    private const string LastTriggerSourcePropertyName = "Monitoring:LastTriggerSource";
     private static readonly TimeSpan OverrideInterval = TimeSpan.FromMinutes(30);
 
     private readonly IRepository<MonitoringTarget, Guid> _targetRepository;
@@ -68,13 +64,13 @@ public class MonitoringWorker : AsyncPeriodicBackgroundWorkerBase, ISingletonDep
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            await HandleTargetAsync(target, now, cancellationToken);
+            await HandleTargetAsync(target, cancellationToken);
         }
 
         await uow.CompleteAsync();
     }
 
-    private async Task HandleTargetAsync(MonitoringTarget target, DateTime now, CancellationToken cancellationToken)
+    private async Task HandleTargetAsync(MonitoringTarget target, CancellationToken cancellationToken)
     {
         HealthCheckResult result;
         try
@@ -88,52 +84,9 @@ public class MonitoringWorker : AsyncPeriodicBackgroundWorkerBase, ISingletonDep
             result = new HealthCheckResult(false, null, "Worker error", TriggerSource);
         }
 
-        var previousStatus = target.CurrentStatus;
+        var recordedAt = _clock.Now;
 
-        target.SetLastCheckedAt(now);
-        target.SetProperty(LastResponseTimePropertyName, result.ResponseTimeMs);
-        target.SetProperty(LastErrorSummaryPropertyName, result.ErrorSummary);
-        target.SetProperty(LastTriggerSourcePropertyName, result.TriggerSource);
-
-        ServiceStatus newStatus;
-
-        if (result.IsSuccess)
-        {
-            newStatus = ServiceStatus.Online;
-            target.SetConsecutiveFailures(0);
-            target.SetLastUpAt(now);
-            target.SetNextDueAt(now.AddSeconds(target.CheckIntervalSeconds));
-            target.SetFirstDownAt(null);
-        }
-        else
-        {
-            var failures = target.ConsecutiveFailures + 1;
-            target.SetConsecutiveFailures(failures);
-
-            if (failures < target.MaxRetryAttempts)
-            {
-                newStatus = ServiceStatus.Checking;
-                var retryDelaySeconds = target.RetryDelaySeconds > 0 ? target.RetryDelaySeconds : 1;
-                target.SetNextDueAt(now.AddSeconds(retryDelaySeconds));
-            }
-            else
-            {
-                newStatus = ServiceStatus.Offline;
-                target.SetNextDueAt(now.AddSeconds(target.CheckIntervalSeconds));
-
-                if (!target.FirstDownAt.HasValue)
-                {
-                    target.SetFirstDownAt(now);
-                }
-            }
-        }
-
-        target.SetCurrentStatus(newStatus);
-
-        if (newStatus != previousStatus)
-        {
-            target.SetLastStatusChangeAt(now);
-        }
+        MonitoringTargetCheckProcessor.ApplyResult(target, result, recordedAt);
 
         await _targetRepository.UpdateAsync(target, autoSave: true, cancellationToken: cancellationToken);
     }

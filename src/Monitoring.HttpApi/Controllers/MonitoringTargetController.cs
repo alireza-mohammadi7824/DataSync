@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -63,5 +64,21 @@ public class MonitoringTargetController : MonitoringController
     public virtual Task TriggerAsync(Guid id)
     {
         return _monitoringTargetAppService.TriggerCheckAsync(id);
+    }
+
+    [HttpPost]
+    [Route("{id}/check")]
+    [Authorize(MonitoringPermissions.Services.Run)]
+    public virtual Task<HealthCheckResultDto> CheckNowAsync(Guid id)
+    {
+        return _monitoringTargetAppService.CheckNowAsync(id);
+    }
+
+    [HttpPost]
+    [Route("check-all")]
+    [Authorize(MonitoringPermissions.Services.Run)]
+    public virtual Task<List<HealthCheckResultDto>> CheckAllAsync()
+    {
+        return _monitoringTargetAppService.CheckAllAsync();
     }
 }
