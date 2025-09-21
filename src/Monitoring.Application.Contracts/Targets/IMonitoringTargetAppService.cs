@@ -6,13 +6,18 @@ using Volo.Abp.Application.Services;
 
 namespace Monitoring.Targets;
 
-public interface IMonitoringTargetAppService :
-    ICrudAppService<
-        MonitoringTargetDto,
-        Guid,
-        PagedAndSortedResultRequestDto,
-        CreateUpdateMonitoringTargetDto>
+public interface IMonitoringTargetAppService : IApplicationService
 {
+    Task<PagedResultDto<MonitoringTargetDto>> GetListAsync(PagedAndSortedResultRequestDto input, ServiceType? type = null, string? search = null);
+
+    Task<MonitoringTargetDto> GetAsync(Guid id);
+
+    Task<MonitoringTargetDto> CreateAsync(CreateUpdateMonitoringTargetDto input);
+
+    Task<MonitoringTargetDto> UpdateAsync(Guid id, CreateUpdateMonitoringTargetDto input);
+
+    Task DeleteAsync(Guid id);
+
     Task TriggerCheckAsync(Guid id);
 
     Task<HealthCheckResultDto> CheckNowAsync(Guid id);

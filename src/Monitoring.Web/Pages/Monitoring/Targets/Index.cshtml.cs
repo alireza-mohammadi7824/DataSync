@@ -14,10 +14,13 @@ public class IndexModel : AbpPageModel
 
     public bool CanDelete { get; private set; }
 
+    public bool CanCreate { get; private set; }
+
     public async Task OnGetAsync()
     {
         CanRun = await AuthorizationService.IsGrantedAsync(MonitoringPermissions.Services.Run);
         CanEdit = await AuthorizationService.IsGrantedAsync(MonitoringPermissions.Services.Edit);
         CanDelete = await AuthorizationService.IsGrantedAsync(MonitoringPermissions.Services.Delete);
+        CanCreate = await AuthorizationService.IsGrantedAsync(MonitoringPermissions.Services.Create);
     }
 }

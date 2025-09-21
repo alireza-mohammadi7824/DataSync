@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Monitoring.HealthChecks;
 using Monitoring.Permissions;
+using Volo.Abp;
 using Volo.Abp.Application.Dtos;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Authorization;
@@ -15,13 +17,17 @@ using Volo.Abp.Guids;
 
 namespace Monitoring.Targets;
 
-public class MonitoringTargetAppService :
-    CrudAppService<MonitoringTarget, MonitoringTargetDto, Guid, PagedAndSortedResultRequestDto, CreateUpdateMonitoringTargetDto>,
-    IMonitoringTargetAppService
+public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetAppService
 {
-    private const string ManualTriggerSource = "manual";
-    private const string BulkTriggerSource = "api";
+    private const int DefaultPageSize = 12;
+    private const int MaxPageSize = 100;
 
+    private static readonly JsonSerializerOptions SettingsSerializerOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private readonly IRepository<MonitoringTarget, Guid> _repository;
     private readonly IHealthCheckProviderResolver _providerResolver;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
@@ -33,71 +39,132 @@ public class MonitoringTargetAppService :
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
         IGuidGenerator guidGenerator)
-        : base(repository)
     {
+        _repository = repository;
         _providerResolver = providerResolver;
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
         _guidGenerator = guidGenerator;
-        GetPolicyName = MonitoringPermissions.Services.View;
-        GetListPolicyName = MonitoringPermissions.Services.View;
-        CreatePolicyName = MonitoringPermissions.Services.Create;
-        UpdatePolicyName = MonitoringPermissions.Services.Edit;
-        DeletePolicyName = MonitoringPermissions.Services.Delete;
     }
 
-    protected override MonitoringTarget MapToEntity(CreateUpdateMonitoringTargetDto createInput)
+    public async Task<PagedResultDto<MonitoringTargetDto>> GetListAsync(
+        PagedAndSortedResultRequestDto input,
+        ServiceType? type = null,
+        string? search = null)
     {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
+
+        var maxResultCount = input.MaxResultCount <= 0
+            ? DefaultPageSize
+            : Math.Min(input.MaxResultCount, MaxPageSize);
+        var skipCount = input.SkipCount < 0 ? 0 : input.SkipCount;
+
+        var queryable = await _repository.GetQueryableAsync();
+
+        if (type.HasValue)
+        {
+            queryable = queryable.Where(target => target.Type == type.Value);
+        }
+
+        if (!search.IsNullOrWhiteSpace())
+        {
+            var term = search!.Trim();
+            queryable = queryable.Where(target => target.Name.Contains(term) || target.Endpoint.Contains(term));
+        }
+
+        queryable = ApplySorting(queryable, input.Sorting);
+
+        var totalCount = await AsyncExecuter.CountAsync(queryable);
+        var items = await AsyncExecuter.ToListAsync(
+            queryable
+                .Skip(skipCount)
+                .Take(maxResultCount));
+
+        var dtos = ObjectMapper.Map<List<MonitoringTarget>, List<MonitoringTargetDto>>(items);
+        return new PagedResultDto<MonitoringTargetDto>(totalCount, dtos);
+    }
+
+    public async Task<MonitoringTargetDto> GetAsync(Guid id)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
+        var entity = await _repository.GetAsync(id);
+        return ObjectMapper.Map<MonitoringTarget, MonitoringTargetDto>(entity);
+    }
+
+    public async Task<MonitoringTargetDto> CreateAsync(CreateUpdateMonitoringTargetDto input)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Create);
+        ValidateInput(input);
+
+        var now = Clock.Now;
         var entity = new MonitoringTarget(
-            GuidGenerator.Create(),
-            createInput.Name,
-            createInput.Type,
-            createInput.Endpoint,
-            createInput.CheckIntervalSeconds,
-            createInput.TimeoutSeconds,
-            createInput.MaxRetryAttempts,
-            createInput.RetryDelaySeconds,
-            createInput.IsActive,
-            createInput.CurrentStatus,
-            createInput.NextDueAt,
-            createInput.SettingsJson,
-            createInput.Category
-        );
+            _guidGenerator.Create(),
+            input.Name,
+            input.Type,
+            input.Endpoint,
+            input.CheckIntervalSeconds,
+            input.TimeoutSeconds,
+            input.MaxRetryAttempts,
+            input.RetryDelaySeconds,
+            input.IsActive,
+            ServiceStatus.Checking,
+            now,
+            input.SettingsJson,
+            input.Category);
 
-        entity.SetLastCheckedAt(createInput.LastCheckedAt);
-        entity.SetLastStatusChangeAt(createInput.LastStatusChangeAt);
-        entity.SetConsecutiveFailures(createInput.ConsecutiveFailures);
-        entity.SetFirstDownAt(createInput.FirstDownAt);
-        entity.SetLastUpAt(createInput.LastUpAt);
+        entity.SetConsecutiveFailures(0);
+        entity.SetLastCheckedAt(null);
+        entity.SetLastStatusChangeAt(now);
+        entity.SetFirstDownAt(null);
+        entity.SetLastUpAt(null);
 
-        return entity;
+        var created = await _repository.InsertAsync(entity, autoSave: true);
+        return ObjectMapper.Map<MonitoringTarget, MonitoringTargetDto>(created);
     }
 
-    protected override void MapToEntity(CreateUpdateMonitoringTargetDto updateInput, MonitoringTarget entity)
+    public async Task<MonitoringTargetDto> UpdateAsync(Guid id, CreateUpdateMonitoringTargetDto input)
     {
-        entity.SetName(updateInput.Name);
-        entity.SetType(updateInput.Type);
-        entity.SetEndpoint(updateInput.Endpoint);
-        entity.UpdateCheckIntervalSeconds(updateInput.CheckIntervalSeconds);
-        entity.UpdateTimeoutSeconds(updateInput.TimeoutSeconds);
-        entity.UpdateRetrySettings(updateInput.MaxRetryAttempts, updateInput.RetryDelaySeconds);
-        entity.SetSettingsJson(updateInput.SettingsJson);
-        entity.SetCategory(updateInput.Category);
-        entity.UpdateActivation(updateInput.IsActive);
-        entity.SetCurrentStatus(updateInput.CurrentStatus);
-        entity.SetLastCheckedAt(updateInput.LastCheckedAt);
-        entity.SetLastStatusChangeAt(updateInput.LastStatusChangeAt);
-        entity.SetNextDueAt(updateInput.NextDueAt);
-        entity.SetConsecutiveFailures(updateInput.ConsecutiveFailures);
-        entity.SetFirstDownAt(updateInput.FirstDownAt);
-        entity.SetLastUpAt(updateInput.LastUpAt);
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Edit);
+        ValidateInput(input);
+
+        var entity = await _repository.GetAsync(id);
+        var typeChanged = entity.Type != input.Type;
+
+        entity.SetName(input.Name);
+        entity.SetType(input.Type);
+        entity.SetEndpoint(input.Endpoint);
+        entity.UpdateCheckIntervalSeconds(input.CheckIntervalSeconds);
+        entity.UpdateTimeoutSeconds(input.TimeoutSeconds);
+        entity.UpdateRetrySettings(input.MaxRetryAttempts, input.RetryDelaySeconds);
+        entity.SetSettingsJson(input.SettingsJson);
+        entity.SetCategory(input.Category);
+        entity.UpdateActivation(input.IsActive);
+
+        if (typeChanged)
+        {
+            entity.SetCurrentStatus(ServiceStatus.Checking);
+            entity.SetConsecutiveFailures(0);
+            entity.SetFirstDownAt(null);
+            entity.SetLastStatusChangeAt(Clock.Now);
+        }
+
+        entity.SetNextDueAt(Clock.Now.AddSeconds(input.CheckIntervalSeconds));
+
+        var updated = await _repository.UpdateAsync(entity, autoSave: true);
+        return ObjectMapper.Map<MonitoringTarget, MonitoringTargetDto>(updated);
+    }
+
+    public async Task DeleteAsync(Guid id)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Delete);
+        await _repository.DeleteAsync(id);
     }
 
     public async Task TriggerCheckAsync(Guid id)
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
-        var entity = await Repository.GetAsync(id);
+        var entity = await _repository.GetAsync(id);
 
         var now = Clock.Now;
         entity.SetLastCheckedAt(now);
@@ -106,20 +173,20 @@ public class MonitoringTargetAppService :
         entity.SetLastStatusChangeAt(now);
         entity.SetConsecutiveFailures(0);
 
-        await Repository.UpdateAsync(entity, autoSave: true);
+        await _repository.UpdateAsync(entity, autoSave: true);
     }
 
     public async Task<HealthCheckResultDto> CheckNowAsync(Guid id)
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
-        var target = await Repository.GetAsync(id);
+        var target = await _repository.GetAsync(id);
 
-        var execution = await ExecuteCheckAsync(target, ManualTriggerSource);
+        var execution = await ExecuteCheckAsync(target, "manual");
         var result = execution.Result;
         var timestamp = execution.Timestamp;
 
-        await Repository.UpdateAsync(target, autoSave: true);
+        await _repository.UpdateAsync(target, autoSave: true);
 
         return CreateResultDto(target, result, timestamp);
     }
@@ -128,14 +195,14 @@ public class MonitoringTargetAppService :
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
-        var targets = await Repository.GetListAsync(target => target.IsActive);
+        var targets = await _repository.GetListAsync(target => target.IsActive);
 
         var results = new List<HealthCheckResultDto>(targets.Count);
 
         foreach (var target in targets)
         {
-            var execution = await ExecuteCheckAsync(target, BulkTriggerSource);
-            await Repository.UpdateAsync(target, autoSave: true);
+            var execution = await ExecuteCheckAsync(target, "api");
+            await _repository.UpdateAsync(target, autoSave: true);
 
             results.Add(CreateResultDto(target, execution.Result, execution.Timestamp));
         }
@@ -147,7 +214,7 @@ public class MonitoringTargetAppService :
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
-        var targets = await Repository.GetListAsync(target => target.IsActive);
+        var targets = await _repository.GetListAsync(target => target.IsActive);
         var now = Clock.Now;
 
         foreach (var target in targets)
@@ -162,7 +229,7 @@ public class MonitoringTargetAppService :
             target.SetNextDueAt(now);
             target.SetConsecutiveFailures(0);
 
-            await Repository.UpdateAsync(target, autoSave: true);
+            await _repository.UpdateAsync(target, autoSave: true);
         }
 
         return targets.Count;
@@ -172,7 +239,7 @@ public class MonitoringTargetAppService :
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
 
-        var queryable = await Repository.GetQueryableAsync();
+        var queryable = await _repository.GetQueryableAsync();
 
         if (type.HasValue)
         {
@@ -216,6 +283,187 @@ public class MonitoringTargetAppService :
                 .Take(normalizedCount));
 
         return ObjectMapper.Map<List<ServiceStatusHistory>, List<ServiceStatusHistoryDto>>(history);
+    }
+
+    private IQueryable<MonitoringTarget> ApplySorting(IQueryable<MonitoringTarget> query, string? sorting)
+    {
+        if (sorting.IsNullOrWhiteSpace())
+        {
+            return query.OrderBy(target => target.Name);
+        }
+
+        var normalized = sorting!.Trim();
+        var lower = normalized.ToLowerInvariant();
+
+        return lower switch
+        {
+            "name desc" or "name descending" => query.OrderByDescending(target => target.Name),
+            "name" or "name asc" => query.OrderBy(target => target.Name),
+            "lastcheckedat desc" or "lastcheckedat" or "lastcheckedat descending" => query.OrderByDescending(target => target.LastCheckedAt),
+            "nextdueat" or "nextdueat asc" => query.OrderBy(target => target.NextDueAt),
+            "nextdueat desc" or "nextdueat descending" => query.OrderByDescending(target => target.NextDueAt),
+            _ => query.OrderBy(target => target.Name)
+        };
+    }
+
+    private void ValidateInput(CreateUpdateMonitoringTargetDto input)
+    {
+        if (input == null)
+        {
+            throw new ArgumentNullException(nameof(input));
+        }
+
+        if (input.Name.IsNullOrWhiteSpace() || input.Name.Length is < 2 or > 128)
+        {
+            throw new UserFriendlyException("Name must be between 2 and 128 characters.");
+        }
+
+        if (input.Endpoint.IsNullOrWhiteSpace())
+        {
+            throw new UserFriendlyException("Endpoint is required.");
+        }
+
+        if (input.CheckIntervalSeconds < 10)
+        {
+            throw new UserFriendlyException("Check interval must be at least 10 seconds.");
+        }
+
+        if (input.TimeoutSeconds <= 0)
+        {
+            throw new UserFriendlyException("Timeout must be greater than zero.");
+        }
+
+        if (input.RetryDelaySeconds < 1)
+        {
+            throw new UserFriendlyException("Retry delay must be at least 1 second.");
+        }
+
+        if (input.MaxRetryAttempts < 0)
+        {
+            throw new UserFriendlyException("Retry attempts cannot be negative.");
+        }
+
+        ValidateEndpointAndSettings(input);
+    }
+
+    private void ValidateEndpointAndSettings(CreateUpdateMonitoringTargetDto input)
+    {
+        switch (input.Type)
+        {
+            case ServiceType.Website:
+                EnsureValidHttpEndpoint(input.Endpoint);
+                DeserializeSettings<WebsiteSettings>(input.SettingsJson, "Website settings");
+                break;
+            case ServiceType.Api:
+                EnsureValidHttpEndpoint(input.Endpoint);
+                DeserializeSettings<ApiSettings>(input.SettingsJson, "API settings");
+                break;
+            case ServiceType.Tcp:
+                ValidateTcpConfiguration(input.Endpoint, input.SettingsJson);
+                break;
+            case ServiceType.Redis:
+                ValidateRedisConfiguration(input.Endpoint, input.SettingsJson);
+                break;
+            default:
+                throw new UserFriendlyException("Unsupported service type.");
+        }
+    }
+
+    private void ValidateTcpConfiguration(string endpoint, string? settingsJson)
+    {
+        if (EndpointParser.TryParseHostPort(endpoint, out _, out _))
+        {
+            DeserializeSettings<TcpSettings>(settingsJson, "TCP settings");
+            return;
+        }
+
+        var settings = DeserializeSettings<TcpSettings>(settingsJson, "TCP settings");
+        if (settings.Host.IsNullOrWhiteSpace() || !settings.Port.HasValue || settings.Port.Value is < 1 or > 65535)
+        {
+            throw new UserFriendlyException("Provide a valid host and port for TCP targets.");
+        }
+    }
+
+    private void ValidateRedisConfiguration(string endpoint, string? settingsJson)
+    {
+        var endpointValid = EndpointParser.TryParseHostPort(endpoint, out _, out _);
+        var settings = DeserializeSettings<RedisSettings>(settingsJson, "Redis settings");
+
+        if (settings.Endpoints is { Length: > 0 })
+        {
+            foreach (var candidate in settings.Endpoints)
+            {
+                if (!EndpointParser.TryParseHostPort(candidate, out _, out _))
+                {
+                    throw new UserFriendlyException("Redis endpoints must be expressed as host:port values.");
+                }
+            }
+        }
+
+        var mode = settings.Mode?.Trim().ToLowerInvariant() ?? "standalone";
+        if (mode == "sentinel")
+        {
+            if (settings.Sentinels == null || settings.Sentinels.Length == 0)
+            {
+                throw new UserFriendlyException("Sentinel configuration requires at least one sentinel endpoint.");
+            }
+
+            foreach (var sentinel in settings.Sentinels)
+            {
+                if (!EndpointParser.TryParseHostPort(sentinel, out _, out _))
+                {
+                    throw new UserFriendlyException("Sentinel endpoints must be valid host:port values.");
+                }
+            }
+
+            if (settings.SentinelMasterName.IsNullOrWhiteSpace())
+            {
+                throw new UserFriendlyException("Sentinel master name is required.");
+            }
+        }
+
+        if (!endpointValid)
+        {
+            var hasEndpoint = settings.Endpoints != null && settings.Endpoints.Any(e => EndpointParser.TryParseHostPort(e, out _, out _));
+            if (!hasEndpoint)
+            {
+                throw new UserFriendlyException("Provide at least one valid Redis endpoint.");
+            }
+        }
+    }
+
+    private static void EnsureValidHttpEndpoint(string endpoint)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new UserFriendlyException("Endpoint must be an absolute HTTP or HTTPS URL.");
+        }
+    }
+
+    private T DeserializeSettings<T>(string? json, string context)
+        where T : class, new()
+    {
+        if (json.IsNullOrWhiteSpace())
+        {
+            return new T();
+        }
+
+        try
+        {
+            var settings = JsonSerializer.Deserialize<T>(json, SettingsSerializerOptions);
+            if (settings == null)
+            {
+                throw new UserFriendlyException($"{context} JSON is invalid.");
+            }
+
+            return settings;
+        }
+        catch (JsonException ex)
+        {
+            Logger.LogWarning(ex, "Failed to deserialize monitoring settings for {Context}", context);
+            throw new UserFriendlyException($"{context} JSON is invalid.");
+        }
     }
 
     private async Task<(HealthCheckResult Result, DateTime Timestamp)> ExecuteCheckAsync(

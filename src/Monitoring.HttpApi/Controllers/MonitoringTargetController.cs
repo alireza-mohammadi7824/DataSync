@@ -30,9 +30,12 @@ public class MonitoringTargetController : MonitoringController
     }
 
     [HttpGet]
-    public virtual Task<PagedResultDto<MonitoringTargetDto>> GetListAsync(PagedAndSortedResultRequestDto input)
+    public virtual Task<PagedResultDto<MonitoringTargetDto>> GetListAsync(
+        PagedAndSortedResultRequestDto input,
+        [FromQuery] ServiceType? type,
+        [FromQuery] string? search)
     {
-        return _monitoringTargetAppService.GetListAsync(input);
+        return _monitoringTargetAppService.GetListAsync(input, type, search);
     }
 
     [HttpGet]

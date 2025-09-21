@@ -27,103 +27,222 @@
         Redis: 'Redis'
     };
 
+    const defaultPageSize = 12;
+
     const module = {
         init(options) {
             this.container = options.container;
             this.filterSelect = options.filterSelect;
+            this.searchInput = options.searchInput;
+            this.sortSelect = options.sortSelect;
             this.checkAllButton = options.checkAllButton;
+            this.newButton = options.newButton;
             this.outagesModalEl = options.outagesModal;
             this.outagesModalTitle = options.outagesModalTitle;
             this.outagesTableBody = options.outagesTableBody;
-            this.editModalEl = options.editModal;
-            this.editForm = options.editForm;
-            this.editModalTitle = options.editModalTitle;
-            this.permissions = window.monitoringPermissions || { canRun: false, canEdit: false, canDelete: false };
+            this.manageModalEl = options.manageModal;
+            this.manageForm = options.manageForm;
+            this.manageErrors = options.manageErrors;
+            this.manageSubmitButton = options.manageSubmitButton;
+            this.pageInfo = options.pageInfo;
+            this.prevButton = options.prevButton;
+            this.nextButton = options.nextButton;
+            this.permissions = window.monitoringPermissions || { canRun: false, canEdit: false, canDelete: false, canCreate: false };
 
             this.pulseTimers = [];
             this.targetCache = new Map();
-            this.currentFilter = 'all';
-            this.editingTargetId = null;
             this.relativeTimeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-
-            if (this.filterSelect) {
-                this.filterSelect.addEventListener('change', () => {
-                    const value = this.filterSelect.value || 'all';
-                    this.fetchTargets(value);
-                });
-            }
-
-            if (this.checkAllButton && !this.permissions.canRun) {
-                this.checkAllButton.classList.add('disabled');
-                this.checkAllButton.setAttribute('disabled', 'disabled');
-            }
-
-            if (this.checkAllButton && this.permissions.canRun) {
-                this.checkAllButton.addEventListener('click', (event) => {
-                    event.preventDefault();
-                    this.checkAllNow();
-                });
-            }
+            this.state = this.readInitialState();
+            this.searchDebounceHandle = null;
+            this.formMode = 'create';
+            this.editingTargetId = null;
 
             if (this.outagesModalEl) {
                 this.outagesModal = new bootstrap.Modal(this.outagesModalEl);
             }
 
-            if (this.editModalEl) {
-                this.editModal = new bootstrap.Modal(this.editModalEl);
+            if (this.manageModalEl) {
+                this.manageModal = new bootstrap.Modal(this.manageModalEl);
+                this.manageModalEl.addEventListener('hidden.bs.modal', () => this.resetForm());
             }
 
-            if (this.editForm) {
-                this.editForm.addEventListener('submit', (event) => this.submitEdit(event));
-            }
-
-            this.fetchTargets(this.currentFilter);
+            this.applyStateToControls();
+            this.bindEvents();
+            this.refresh(true);
         },
 
-        fetchTargets(typeValue) {
+        readInitialState() {
+            const params = new URLSearchParams(window.location.search);
+            const type = params.get('type') || 'all';
+            const search = params.get('search') || '';
+            const sorting = params.get('sorting') || 'Name';
+            const skipCount = Math.max(Number.parseInt(params.get('skipCount') || '0', 10) || 0, 0);
+            const maxResultCount = Math.max(Number.parseInt(params.get('maxResultCount') || defaultPageSize.toString(), 10) || defaultPageSize, 1);
+
+            return {
+                type,
+                search,
+                sorting,
+                skipCount,
+                maxResultCount: Math.min(maxResultCount, 100)
+            };
+        },
+
+        applyStateToControls() {
+            if (this.filterSelect) {
+                this.filterSelect.value = this.state.type || 'all';
+            }
+
+            if (this.searchInput) {
+                this.searchInput.value = this.state.search;
+            }
+
+            if (this.sortSelect) {
+                this.sortSelect.value = this.state.sorting;
+            }
+        },
+
+        bindEvents() {
+            if (this.filterSelect) {
+                this.filterSelect.addEventListener('change', () => {
+                    this.state.type = this.filterSelect.value || 'all';
+                    this.state.skipCount = 0;
+                    this.refresh();
+                });
+            }
+
+            if (this.searchInput) {
+                this.searchInput.addEventListener('input', () => {
+                    clearTimeout(this.searchDebounceHandle);
+                    this.searchDebounceHandle = setTimeout(() => {
+                        this.state.search = (this.searchInput.value || '').trim();
+                        this.state.skipCount = 0;
+                        this.refresh();
+                    }, 300);
+                });
+            }
+
+            if (this.sortSelect) {
+                this.sortSelect.addEventListener('change', () => {
+                    this.state.sorting = this.sortSelect.value || 'Name';
+                    this.state.skipCount = 0;
+                    this.refresh();
+                });
+            }
+
+            if (this.checkAllButton) {
+                if (!this.permissions.canRun) {
+                    this.checkAllButton.classList.add('disabled');
+                    this.checkAllButton.setAttribute('disabled', 'disabled');
+                } else {
+                    this.checkAllButton.addEventListener('click', (event) => {
+                        event.preventDefault();
+                        this.checkAllNow();
+                    });
+                }
+            }
+
+            if (this.newButton) {
+                if (!this.permissions.canCreate) {
+                    this.newButton.classList.add('disabled');
+                    this.newButton.setAttribute('disabled', 'disabled');
+                } else {
+                    this.newButton.addEventListener('click', (event) => {
+                        event.preventDefault();
+                        this.openCreate();
+                    });
+                }
+            }
+
+            if (this.manageForm) {
+                this.manageForm.addEventListener('submit', (event) => this.submitManageForm(event));
+            }
+
+            if (this.prevButton) {
+                this.prevButton.addEventListener('click', () => {
+                    if (this.state.skipCount <= 0) {
+                        return;
+                    }
+
+                    this.state.skipCount = Math.max(0, this.state.skipCount - this.state.maxResultCount);
+                    this.refresh();
+                });
+            }
+
+            if (this.nextButton) {
+                this.nextButton.addEventListener('click', () => {
+                    const nextSkip = this.state.skipCount + this.state.maxResultCount;
+                    if (nextSkip >= (this.totalCount || 0)) {
+                        return;
+                    }
+
+                    this.state.skipCount = nextSkip;
+                    this.refresh();
+                });
+            }
+        },
+
+        refresh(updateHistory = true) {
             if (!this.container) {
                 return;
             }
 
-            this.currentFilter = typeValue || this.currentFilter || 'all';
             this.clearPulseTimers();
+            this.container.innerHTML = '<div class="col-12"><div class="alert alert-info mb-0">Loading services…</div></div>';
 
-            let url = '/api/monitoring/targets/overview';
-            if (this.currentFilter && this.currentFilter !== 'all') {
-                const params = new URLSearchParams();
-                params.append('type', this.currentFilter);
-                url += `?${params.toString()}`;
-            }
-
-            fetch(url, {
-                headers: {
-                    Accept: 'application/json'
-                }
-            })
-                .then((response) => this.ensureSuccess(response))
-                .then((data) => {
-                    const targets = Array.isArray(data) ? data : [];
-                    this.renderTargets(targets);
+            this.getTargets(this.buildQueryParams())
+                .then((result) => {
+                    this.totalCount = result.totalCount || 0;
+                    const items = Array.isArray(result.items) ? result.items : [];
+                    this.renderTargets(items);
+                    this.renderPager();
+                    if (updateHistory) {
+                        this.updateHistory();
+                    }
                 })
                 .catch((error) => this.handleError(error, 'Failed to load monitoring targets.'));
+        },
+
+        buildQueryParams() {
+            const params = new URLSearchParams();
+            params.set('skipCount', this.state.skipCount.toString());
+            params.set('maxResultCount', this.state.maxResultCount.toString());
+
+            if (this.state.sorting) {
+                params.set('sorting', this.state.sorting);
+            }
+
+            if (this.state.type && this.state.type !== 'all') {
+                params.set('type', this.state.type);
+            }
+
+            if (this.state.search) {
+                params.set('search', this.state.search);
+            }
+
+            return params;
+        },
+
+        updateHistory() {
+            const params = this.buildQueryParams();
+            const url = `${window.location.pathname}?${params.toString()}`;
+            window.history.replaceState({}, '', url);
         },
 
         renderTargets(targets) {
             this.targetCache.clear();
 
             if (!targets.length) {
-                this.container.innerHTML = '<div class="col-12"><div class="alert alert-info mb-0">No monitoring services found.</div></div>';
+                this.container.innerHTML = '<div class="col-12"><div class="alert alert-warning mb-0">No monitoring services matched your filters.</div></div>';
                 return;
             }
 
-            const cardsHtml = targets
-                .map((target) => {
-                    this.targetCache.set(target.id, target);
-                    return this.renderCard(target);
-                })
-                .join('');
+            const cards = targets.map((target) => {
+                this.targetCache.set(target.id, target);
+                return this.renderCard(target);
+            });
 
-            this.container.innerHTML = cardsHtml;
+            this.container.innerHTML = cards.join('');
 
             targets.forEach((target) => {
                 const card = document.getElementById(`monitoring-card-${target.id}`);
@@ -142,18 +261,19 @@
             const nextDue = this.relativeTime(target.nextDueAt);
 
             const actions = [];
+
             if (this.permissions.canRun) {
-                actions.push(`<button type="button" class="btn btn-outline-primary btn-sm" data-action="check" data-id="${target.id}"><i class="fa fa-sync me-1"></i>Check Now</button>`);
+                actions.push(`<button type="button" class="btn btn-outline-primary btn-sm" data-action="check" data-id="${target.id}" aria-label="Check ${this.escapeHtml(target.name)} now"><i class="fa fa-sync me-1" aria-hidden="true"></i>Check Now</button>`);
             }
 
-            actions.push(`<button type="button" class="btn btn-outline-secondary btn-sm" data-action="outages" data-id="${target.id}"><i class="fa fa-bolt me-1"></i>View outages</button>`);
+            actions.push(`<button type="button" class="btn btn-outline-secondary btn-sm" data-action="outages" data-id="${target.id}" aria-label="View outages for ${this.escapeHtml(target.name)}"><i class="fa fa-bolt me-1" aria-hidden="true"></i>View outages</button>`);
 
             if (this.permissions.canEdit) {
-                actions.push(`<button type="button" class="btn btn-outline-info btn-sm" data-action="edit" data-id="${target.id}"><i class="fa fa-pen me-1"></i>Edit</button>`);
+                actions.push(`<button type="button" class="btn btn-outline-info btn-sm" data-action="edit" data-id="${target.id}" aria-label="Edit ${this.escapeHtml(target.name)}"><i class="fa fa-pen me-1" aria-hidden="true"></i>Edit</button>`);
             }
 
             if (this.permissions.canDelete) {
-                actions.push(`<button type="button" class="btn btn-outline-danger btn-sm" data-action="delete" data-id="${target.id}"><i class="fa fa-trash me-1"></i>Delete</button>`);
+                actions.push(`<button type="button" class="btn btn-outline-danger btn-sm" data-action="delete" data-id="${target.id}" aria-label="Delete ${this.escapeHtml(target.name)}"><i class="fa fa-trash me-1" aria-hidden="true"></i>Delete</button>`);
             }
 
             const escapedName = this.escapeHtml(target.name);
@@ -181,56 +301,254 @@
                 </div>`;
         },
 
-        relativeTime(iso) {
-            if (!iso) {
-                return '—';
-            }
-
-            const date = new Date(iso);
-            if (Number.isNaN(date.getTime())) {
-                return '—';
-            }
-
-            const now = new Date();
-            let diff = date.getTime() - now.getTime();
-            const absDiff = Math.abs(diff);
-            let unit = 'second';
-            let value = Math.round(diff / 1000);
-
-            if (absDiff >= 1000 * 60 * 60 * 24) {
-                unit = 'day';
-                value = Math.round(diff / (1000 * 60 * 60 * 24));
-            } else if (absDiff >= 1000 * 60 * 60) {
-                unit = 'hour';
-                value = Math.round(diff / (1000 * 60 * 60));
-            } else if (absDiff >= 1000 * 60) {
-                unit = 'minute';
-                value = Math.round(diff / (1000 * 60));
-            }
-
-            return this.relativeTimeFormatter.format(value, unit);
-        },
-
-        startPulseTimer(card, intervalSeconds) {
-            if (!intervalSeconds || intervalSeconds <= 0) {
+        renderPager() {
+            if (!this.pageInfo || !this.prevButton || !this.nextButton) {
                 return;
             }
 
-            const timer = setInterval(() => {
-                card.classList.add('pulse-now');
-                setTimeout(() => card.classList.remove('pulse-now'), 300);
-            }, intervalSeconds * 1000);
+            const total = this.totalCount || 0;
+            if (total === 0) {
+                this.pageInfo.textContent = 'No services found';
+                this.prevButton.setAttribute('disabled', 'disabled');
+                this.nextButton.setAttribute('disabled', 'disabled');
+                return;
+            }
 
-            this.pulseTimers.push(timer);
+            const pageSize = this.state.maxResultCount;
+            const currentPage = Math.floor(this.state.skipCount / pageSize) + 1;
+            const totalPages = Math.max(1, Math.ceil(total / pageSize));
+            const start = this.state.skipCount + 1;
+            const end = Math.min(total, this.state.skipCount + pageSize);
+
+            this.pageInfo.textContent = `Showing ${start}–${end} of ${total}`;
+
+            if (currentPage <= 1) {
+                this.prevButton.setAttribute('disabled', 'disabled');
+            } else {
+                this.prevButton.removeAttribute('disabled');
+            }
+
+            if (currentPage >= totalPages) {
+                this.nextButton.setAttribute('disabled', 'disabled');
+            } else {
+                this.nextButton.removeAttribute('disabled');
+            }
         },
 
-        clearPulseTimers() {
-            this.pulseTimers.forEach((timer) => clearInterval(timer));
-            this.pulseTimers = [];
+        openCreate() {
+            if (!this.permissions.canCreate || !this.manageModal) {
+                return;
+            }
+
+            this.formMode = 'create';
+            this.editingTargetId = null;
+            this.resetForm();
+            this.setFormDefaults();
+            this.setFormTitle('New service');
+            this.setSubmitLabel('Create');
+            this.manageModal.show();
+        },
+
+        openEdit(id) {
+            if (!this.permissions.canEdit || !this.manageModal) {
+                return;
+            }
+
+            const target = this.targetCache.get(id);
+            if (!target) {
+                this.handleError(null, 'Unable to load the selected service. Please refresh and try again.');
+                return;
+            }
+
+            this.formMode = 'edit';
+            this.editingTargetId = id;
+            this.resetForm();
+            this.populateForm(target);
+            this.setFormTitle(`Edit ${target.name}`);
+            this.setSubmitLabel('Save changes');
+            this.manageModal.show();
+        },
+
+        setFormDefaults() {
+            if (!this.manageForm) {
+                return;
+            }
+
+            this.manageForm.reset();
+            this.manageForm.querySelector('#monitoring-manage-type').value = '0';
+            this.manageForm.querySelector('#monitoring-manage-interval').value = 300;
+            this.manageForm.querySelector('#monitoring-manage-timeout').value = 30;
+            this.manageForm.querySelector('#monitoring-manage-retries').value = 3;
+            this.manageForm.querySelector('#monitoring-manage-retry-delay').value = 30;
+            this.manageForm.querySelector('#monitoring-manage-is-active').checked = true;
+        },
+
+        populateForm(target) {
+            if (!this.manageForm) {
+                return;
+            }
+
+            this.manageForm.querySelector('#monitoring-manage-name').value = target.name ?? '';
+            this.manageForm.querySelector('#monitoring-manage-type').value = this.resolveTypeValue(target.type);
+            this.manageForm.querySelector('#monitoring-manage-endpoint').value = target.endpoint ?? '';
+            this.manageForm.querySelector('#monitoring-manage-settings').value = target.settingsJson ?? '';
+            this.manageForm.querySelector('#monitoring-manage-interval').value = target.checkIntervalSeconds ?? 300;
+            this.manageForm.querySelector('#monitoring-manage-timeout').value = target.timeoutSeconds ?? 30;
+            this.manageForm.querySelector('#monitoring-manage-retries').value = target.maxRetryAttempts ?? 0;
+            this.manageForm.querySelector('#monitoring-manage-retry-delay').value = target.retryDelaySeconds ?? 1;
+            this.manageForm.querySelector('#monitoring-manage-category').value = target.category ?? '';
+            this.manageForm.querySelector('#monitoring-manage-is-active').checked = Boolean(target.isActive);
+        },
+
+        resetForm() {
+            if (this.manageErrors) {
+                this.manageErrors.classList.add('d-none');
+                this.manageErrors.textContent = '';
+            }
+
+            if (this.manageForm) {
+                this.manageForm.reset();
+            }
+        },
+
+        setFormTitle(title) {
+            const heading = document.getElementById('monitoring-manage-modal-title');
+            if (heading) {
+                heading.textContent = title;
+            }
+        },
+
+        setSubmitLabel(label) {
+            if (!this.manageSubmitButton) {
+                return;
+            }
+
+            const labelSpan = this.manageSubmitButton.querySelector('[data-role="submit-label"]');
+            if (labelSpan) {
+                labelSpan.textContent = label;
+            }
+        },
+
+        submitManageForm(event) {
+            event.preventDefault();
+
+            if (!this.manageForm || !this.manageSubmitButton) {
+                return;
+            }
+
+            const formData = new FormData(this.manageForm);
+            const settings = (formData.get('settingsJson') || '').toString().trim();
+            if (!this.validateJson(settings)) {
+                this.showFormError('Settings JSON is invalid.');
+                return;
+            }
+
+            const typeValue = formData.get('type')?.toString() || '0';
+
+            const payload = {
+                name: formData.get('name')?.toString().trim() || '',
+                type: this.toNumber(typeValue, 0),
+                endpoint: formData.get('endpoint')?.toString().trim() || '',
+                settingsJson: settings.length ? settings : null,
+                checkIntervalSeconds: this.toNumber(formData.get('checkIntervalSeconds'), 300),
+                timeoutSeconds: this.toNumber(formData.get('timeoutSeconds'), 30),
+                maxRetryAttempts: this.toNumber(formData.get('maxRetryAttempts'), 0),
+                retryDelaySeconds: this.toNumber(formData.get('retryDelaySeconds'), 1),
+                category: this.normalizeString(formData.get('category')),
+                isActive: formData.get('isActive') === 'on'
+            };
+
+            if (!payload.name || payload.name.length < 2) {
+                this.showFormError('Name must be at least 2 characters.');
+                return;
+            }
+
+            if (!payload.endpoint) {
+                this.showFormError('Endpoint is required.');
+                return;
+            }
+
+            this.showFormError(null);
+            this.toggleButtonState(this.manageSubmitButton, true);
+
+            const request = this.formMode === 'edit' && this.editingTargetId
+                ? this.updateTarget(this.editingTargetId, payload)
+                : this.createTarget(payload);
+
+            request
+                .then(() => {
+                    const message = this.formMode === 'edit' ? 'Monitoring service updated.' : 'Monitoring service created.';
+                    abp.notify.success(message);
+                    this.manageModal.hide();
+                    if (this.formMode !== 'edit') {
+                        this.state.skipCount = 0;
+                    }
+                    this.refresh();
+                })
+                .catch((error) => this.handleError(error, 'Failed to save monitoring service.', true))
+                .finally(() => this.toggleButtonState(this.manageSubmitButton, false));
+        },
+
+        showFormError(message) {
+            if (!this.manageErrors) {
+                return;
+            }
+
+            if (!message) {
+                this.manageErrors.classList.add('d-none');
+                this.manageErrors.textContent = '';
+                return;
+            }
+
+            this.manageErrors.textContent = message;
+            this.manageErrors.classList.remove('d-none');
+        },
+
+        getTargets(params) {
+            const url = `/api/monitoring/targets?${params.toString()}`;
+            return this.request(url, { method: 'GET' });
+        },
+
+        createTarget(dto) {
+            return this.request('/api/monitoring/targets', {
+                method: 'POST',
+                body: dto
+            });
+        },
+
+        updateTarget(id, dto) {
+            return this.request(`/api/monitoring/targets/${id}`, {
+                method: 'PUT',
+                body: dto
+            });
+        },
+
+        deleteTarget(id) {
+            if (!this.permissions.canDelete) {
+                return;
+            }
+
+            abp.message
+                .confirm('This will deactivate the monitoring target. Continue?', 'Delete service')
+                .then((confirmed) => {
+                    if (!confirmed) {
+                        return;
+                    }
+
+                    this.request(`/api/monitoring/targets/${id}`, { method: 'DELETE' })
+                        .then(() => {
+                            abp.notify.success('Monitoring service deleted.');
+                            if (this.targetCache.size <= 1 && this.state.skipCount > 0) {
+                                this.state.skipCount = Math.max(0, this.state.skipCount - this.state.maxResultCount);
+                            }
+                            this.refresh();
+                        })
+                        .catch((error) => this.handleError(error, 'Failed to delete monitoring service.'));
+                });
         },
 
         checkAllNow() {
-            if (!this.permissions.canRun) {
+            if (!this.permissions.canRun || !this.checkAllButton) {
                 return;
             }
 
@@ -238,7 +556,7 @@
             this.request('/api/monitoring/check-all', { method: 'POST' })
                 .then((count) => {
                     abp.notify.success(`Queued ${count ?? 0} service checks.`);
-                    this.fetchTargets(this.currentFilter);
+                    this.refresh(false);
                 })
                 .catch((error) => this.handleError(error, 'Failed to queue monitoring checks.'))
                 .finally(() => this.toggleButtonState(this.checkAllButton, false));
@@ -254,7 +572,7 @@
             this.request(`/api/monitoring/targets/${id}/check`, { method: 'POST' })
                 .then(() => {
                     abp.notify.success('Health check started.');
-                    this.fetchTargets(this.currentFilter);
+                    this.refresh(false);
                 })
                 .catch((error) => this.handleError(error, 'Failed to start health check.'));
         },
@@ -270,13 +588,11 @@
             }
 
             if (this.outagesTableBody) {
-                this.outagesTableBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Loading...</td></tr>';
+                this.outagesTableBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Loading…</td></tr>';
             }
 
             this.getOutages(id)
-                .then((outages) => {
-                    this.renderOutages(outages);
-                })
+                .then((outages) => this.renderOutages(outages))
                 .catch((error) => this.handleError(error, 'Failed to load outage history.'))
                 .finally(() => {
                     if (this.outagesModal) {
@@ -320,100 +636,92 @@
             this.outagesTableBody.innerHTML = rows;
         },
 
-        openEdit(id) {
-            if (!this.permissions.canEdit || !this.editModal) {
-                return;
+        request(url, options) {
+            const init = options || {};
+            init.headers = init.headers || { 'Accept': 'application/json' };
+
+            if (init.body && typeof init.body === 'object' && !(init.body instanceof FormData)) {
+                init.headers['Content-Type'] = 'application/json';
+                init.body = JSON.stringify(init.body);
             }
 
-            const target = this.targetCache.get(id);
-            if (!target) {
-                return;
-            }
-
-            this.editingTargetId = id;
-
-            this.editForm.querySelector('#monitoring-edit-name').value = target.name ?? '';
-            this.editForm.querySelector('#monitoring-edit-endpoint').value = target.endpoint ?? '';
-            this.editForm.querySelector('#monitoring-edit-interval').value = target.checkIntervalSeconds ?? 0;
-            this.editForm.querySelector('#monitoring-edit-timeout').value = target.timeoutSeconds ?? 0;
-            this.editForm.querySelector('#monitoring-edit-retries').value = target.maxRetryAttempts ?? 0;
-            this.editForm.querySelector('#monitoring-edit-retry-delay').value = target.retryDelaySeconds ?? 0;
-            this.editForm.querySelector('#monitoring-edit-category').value = target.category ?? '';
-            this.editForm.querySelector('#monitoring-edit-is-active').checked = Boolean(target.isActive);
-
-            if (this.editModalTitle) {
-                this.editModalTitle.textContent = `Edit ${target.name}`;
-            }
-
-            this.editModal.show();
+            return fetch(url, init).then((response) => this.ensureSuccess(response));
         },
 
-        submitEdit(event) {
-            event.preventDefault();
+        ensureSuccess(response) {
+            if (response.ok) {
+                if (response.status === 204) {
+                    return null;
+                }
 
-            if (!this.permissions.canEdit || !this.editingTargetId) {
-                return;
+                return response.json();
             }
 
-            const target = this.targetCache.get(this.editingTargetId);
-            if (!target) {
-                return;
-            }
-
-            const formData = new FormData(this.editForm);
-            const payload = {
-                name: formData.get('name') || target.name,
-                type: target.type,
-                endpoint: formData.get('endpoint') || target.endpoint,
-                settingsJson: target.settingsJson ?? null,
-                checkIntervalSeconds: this.toNumber(formData.get('checkIntervalSeconds'), target.checkIntervalSeconds),
-                timeoutSeconds: this.toNumber(formData.get('timeoutSeconds'), target.timeoutSeconds),
-                maxRetryAttempts: this.toNumber(formData.get('maxRetryAttempts'), target.maxRetryAttempts),
-                retryDelaySeconds: this.toNumber(formData.get('retryDelaySeconds'), target.retryDelaySeconds),
-                category: this.normalizeString(formData.get('category')),
-                isActive: formData.get('isActive') === 'on',
-                currentStatus: target.currentStatus,
-                lastCheckedAt: target.lastCheckedAt,
-                lastStatusChangeAt: target.lastStatusChangeAt,
-                nextDueAt: target.nextDueAt,
-                consecutiveFailures: target.consecutiveFailures,
-                firstDownAt: target.firstDownAt,
-                lastUpAt: target.lastUpAt
-            };
-
-            this.toggleButtonState(this.editForm.querySelector('button[type="submit"]'), true);
-
-            this.request(`/api/monitoring/targets/${this.editingTargetId}`, {
-                method: 'PUT',
-                body: payload
-            })
-                .then(() => {
-                    abp.notify.success('Monitoring service updated.');
-                    this.editModal.hide();
-                    this.fetchTargets(this.currentFilter);
-                })
-                .catch((error) => this.handleError(error, 'Failed to update monitoring service.'))
-                .finally(() => this.toggleButtonState(this.editForm.querySelector('button[type="submit"]'), false));
+            return response
+                .json()
+                .catch(() => ({ error: { message: response.statusText } }))
+                .then((payload) => Promise.reject(payload));
         },
 
-        deleteTarget(id) {
-            if (!this.permissions.canDelete) {
+        handleError(error, fallbackMessage, isFormError) {
+            const message = this.extractErrorMessage(error) || fallbackMessage || 'An unexpected error occurred.';
+
+            if (isFormError) {
+                this.showFormError(message);
                 return;
             }
 
-            abp.message.confirm('This will deactivate the monitoring target. Continue?', 'Delete service')
-                .then((confirmed) => {
-                    if (!confirmed) {
-                        return;
-                    }
+            abp.notify.error(message);
+        },
 
-                    this.request(`/api/monitoring/targets/${id}`, { method: 'DELETE' })
-                        .then(() => {
-                            abp.notify.success('Monitoring service deleted.');
-                            this.fetchTargets(this.currentFilter);
-                        })
-                        .catch((error) => this.handleError(error, 'Failed to delete monitoring service.'));
-                });
+        extractErrorMessage(error) {
+            if (!error) {
+                return null;
+            }
+
+            if (typeof error === 'string') {
+                return error;
+            }
+
+            const payload = error.error || error;
+            if (payload) {
+                if (Array.isArray(payload.validationErrors) && payload.validationErrors.length) {
+                    return payload.validationErrors.map((e) => e.message || e).join('\n');
+                }
+
+                if (payload.message) {
+                    return payload.message;
+                }
+            }
+
+            return null;
+        },
+
+        toggleButtonState(button, isLoading) {
+            if (!button) {
+                return;
+            }
+
+            const spinner = button.querySelector('.spinner-border');
+            const label = button.querySelector('[data-role="submit-label"]');
+
+            if (isLoading) {
+                button.setAttribute('disabled', 'disabled');
+                if (spinner) {
+                    spinner.classList.remove('d-none');
+                }
+                if (label) {
+                    label.classList.add('opacity-75');
+                }
+            } else {
+                button.removeAttribute('disabled');
+                if (spinner) {
+                    spinner.classList.add('d-none');
+                }
+                if (label) {
+                    label.classList.remove('opacity-75');
+                }
+            }
         },
 
         setCardStatus(id, statusLabel) {
@@ -435,86 +743,52 @@
             }
         },
 
-        toggleButtonState(button, isLoading) {
-            if (!button) {
+        clearPulseTimers() {
+            this.pulseTimers.forEach((timer) => clearInterval(timer));
+            this.pulseTimers = [];
+        },
+
+        startPulseTimer(card, intervalSeconds) {
+            if (!intervalSeconds || intervalSeconds <= 0) {
                 return;
             }
 
-            if (isLoading) {
-                button.setAttribute('disabled', 'disabled');
-                button.dataset.originalText = button.dataset.originalText || button.innerHTML;
-                button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
-            } else {
-                button.removeAttribute('disabled');
-                if (button.dataset.originalText) {
-                    button.innerHTML = button.dataset.originalText;
-                    delete button.dataset.originalText;
-                }
-            }
+            const timer = setInterval(() => {
+                card.classList.add('pulse-now');
+                setTimeout(() => card.classList.remove('pulse-now'), 300);
+            }, intervalSeconds * 1000);
+
+            this.pulseTimers.push(timer);
         },
 
-        ensureSuccess(response) {
-            if (response.ok) {
-                if (response.status === 204) {
-                    return null;
-                }
-
-                const contentType = response.headers.get('content-type') || '';
-                if (contentType.includes('application/json')) {
-                    return response.json();
-                }
-
-                return response.text();
+        relativeTime(iso) {
+            if (!iso) {
+                return '—';
             }
 
-            throw response;
-        },
-
-        request(url, options) {
-            const requestOptions = Object.assign({
-                method: 'GET',
-                headers: {
-                    Accept: 'application/json'
-                }
-            }, options || {});
-
-            requestOptions.method = (requestOptions.method || 'GET').toUpperCase();
-
-            if (requestOptions.method !== 'GET' && requestOptions.method !== 'HEAD') {
-                requestOptions.headers['Content-Type'] = 'application/json';
-                if (window.abp?.security?.antiForgery) {
-                    requestOptions.headers['RequestVerificationToken'] = window.abp.security.antiForgery.getToken();
-                }
-
-                if (requestOptions.body && typeof requestOptions.body !== 'string') {
-                    requestOptions.body = JSON.stringify(requestOptions.body);
-                } else if (!requestOptions.body) {
-                    requestOptions.body = '{}';
-                }
+            const date = new Date(iso);
+            if (Number.isNaN(date.getTime())) {
+                return '—';
             }
 
-            return fetch(url, requestOptions).then((response) => this.ensureSuccess(response));
-        },
+            const now = new Date();
+            let diff = date.getTime() - now.getTime();
+            const absDiff = Math.abs(diff);
+            let unit = 'second';
+            let value = Math.round(diff / 1000);
 
-        handleError(error, fallbackMessage) {
-            if (error instanceof Response) {
-                return error
-                    .clone()
-                    .json()
-                    .then((payload) => {
-                        const message = payload?.error?.message || payload?.message || fallbackMessage;
-                        abp.notify.error(message);
-                    })
-                    .catch(() => {
-                        error.text().then((text) => {
-                            const message = text || fallbackMessage;
-                            abp.notify.error(message);
-                        });
-                    });
+            if (absDiff >= 1000 * 60 * 60 * 24) {
+                unit = 'day';
+                value = Math.round(diff / (1000 * 60 * 60 * 24));
+            } else if (absDiff >= 1000 * 60 * 60) {
+                unit = 'hour';
+                value = Math.round(diff / (1000 * 60 * 60));
+            } else if (absDiff >= 1000 * 60) {
+                unit = 'minute';
+                value = Math.round(diff / (1000 * 60));
             }
 
-            const message = error?.message || fallbackMessage;
-            abp.notify.error(message);
+            return this.relativeTimeFormatter.format(value, unit);
         },
 
         resolveStatus(value) {
@@ -524,7 +798,7 @@
 
             if (typeof value === 'string') {
                 const normalized = value.trim();
-                return statusLabelMap[normalized] || statusLabelMap[normalized.toLowerCase()] || normalized;
+                return statusLabelMap[normalized] || statusLabelMap[normalized.toLowerCase?.()] || normalized;
             }
 
             if (typeof value === 'number') {
@@ -549,6 +823,34 @@
             }
 
             return 'Unknown';
+        },
+
+        resolveTypeValue(value) {
+            if (typeof value === 'string') {
+                const numeric = Number.parseInt(value, 10);
+                if (!Number.isNaN(numeric)) {
+                    return String(numeric);
+                }
+
+                switch (value.toLowerCase()) {
+                    case 'website':
+                        return '0';
+                    case 'api':
+                        return '1';
+                    case 'tcp':
+                        return '2';
+                    case 'redis':
+                        return '3';
+                    default:
+                        return '0';
+                }
+            }
+
+            if (typeof value === 'number') {
+                return String(value);
+            }
+
+            return '0';
         },
 
         formatDateTime(value) {
@@ -581,15 +883,9 @@
                 return '—';
             }
 
-            const hrs = Math.floor(seconds / 3600)
-                .toString()
-                .padStart(2, '0');
-            const mins = Math.floor((seconds % 3600) / 60)
-                .toString()
-                .padStart(2, '0');
-            const secs = Math.floor(seconds % 60)
-                .toString()
-                .padStart(2, '0');
+            const hrs = Math.floor(seconds / 3600).toString().padStart(2, '0');
+            const mins = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+            const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
 
             return `${hrs}:${mins}:${secs}`;
         },
@@ -613,7 +909,7 @@
                 return fallback ?? 0;
             }
 
-            return parsed;
+            return Math.trunc(parsed);
         },
 
         normalizeString(value) {
@@ -623,18 +919,31 @@
 
             const trimmed = String(value).trim();
             return trimmed.length ? trimmed : null;
+        },
+
+        validateJson(str) {
+            if (!str) {
+                return true;
+            }
+
+            try {
+                JSON.parse(str);
+                return true;
+            } catch (error) {
+                return false;
+            }
         }
     };
 
     document.addEventListener('click', (event) => {
-        const target = event.target.closest('[data-action]');
-        if (!target) {
+        const actionEl = event.target.closest('[data-action]');
+        if (!actionEl || !window.monitoringTargets) {
             return;
         }
 
-        const action = target.getAttribute('data-action');
-        const id = target.getAttribute('data-id');
-        if (!action || !id || !window.monitoringTargets) {
+        const action = actionEl.getAttribute('data-action');
+        const id = actionEl.getAttribute('data-id');
+        if (!action || !id) {
             return;
         }
 
