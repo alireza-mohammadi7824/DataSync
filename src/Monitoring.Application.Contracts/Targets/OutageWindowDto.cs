@@ -10,4 +10,6 @@ public class OutageWindowDto : EntityDto<Guid>
     public DateTime? EndedAt { get; set; }
     public int FailureCount { get; set; }
     public int? TotalDurationSec { get; set; }
+    public DateTime? LastAlertAt { get; set; }
+    public int AlertsSent { get; set; }
 }

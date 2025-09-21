@@ -44,6 +44,18 @@
             this.manageForm = options.manageForm;
             this.manageErrors = options.manageErrors;
             this.manageSubmitButton = options.manageSubmitButton;
+            this.alertPolicyModalEl = options.alertPolicyModal;
+            this.alertPolicyForm = options.alertPolicyForm;
+            this.alertPolicyErrors = options.alertPolicyErrors;
+            this.alertPolicySubmit = options.alertPolicySubmit;
+            this.alertPolicyInheritance = options.alertPolicyInheritance;
+            this.maintenanceButton = options.maintenanceButton;
+            this.maintenanceModalEl = options.maintenanceModal;
+            this.maintenanceForm = options.maintenanceForm;
+            this.maintenanceErrors = options.maintenanceErrors;
+            this.maintenanceSubmit = options.maintenanceSubmit;
+            this.maintenanceTableBody = options.maintenanceTableBody;
+            this.maintenanceTargetSelect = options.maintenanceTargetSelect;
             this.pageInfo = options.pageInfo;
             this.prevButton = options.prevButton;
             this.nextButton = options.nextButton;
@@ -56,6 +68,8 @@
             this.searchDebounceHandle = null;
             this.formMode = 'create';
             this.editingTargetId = null;
+            this.alertPolicyTargetId = null;
+            this.maintenanceFilterTargetId = null;
 
             if (this.outagesModalEl) {
                 this.outagesModal = new bootstrap.Modal(this.outagesModalEl);
@@ -64,6 +78,16 @@
             if (this.manageModalEl) {
                 this.manageModal = new bootstrap.Modal(this.manageModalEl);
                 this.manageModalEl.addEventListener('hidden.bs.modal', () => this.resetForm());
+            }
+
+            if (this.alertPolicyModalEl) {
+                this.alertPolicyModal = new bootstrap.Modal(this.alertPolicyModalEl);
+                this.alertPolicyModalEl.addEventListener('hidden.bs.modal', () => this.resetAlertPolicyForm());
+            }
+
+            if (this.maintenanceModalEl) {
+                this.maintenanceModal = new bootstrap.Modal(this.maintenanceModalEl);
+                this.maintenanceModalEl.addEventListener('hidden.bs.modal', () => this.resetMaintenanceForm());
             }
 
             this.applyStateToControls();
@@ -156,6 +180,25 @@
 
             if (this.manageForm) {
                 this.manageForm.addEventListener('submit', (event) => this.submitManageForm(event));
+            }
+
+            if (this.alertPolicyForm) {
+                this.alertPolicyForm.addEventListener('submit', (event) => this.submitAlertPolicy(event));
+            }
+
+            if (this.maintenanceButton) {
+                this.maintenanceButton.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    this.openMaintenanceModal();
+                });
+            }
+
+            if (this.maintenanceForm) {
+                this.maintenanceForm.addEventListener('submit', (event) => this.submitMaintenance(event));
+            }
+
+            if (this.maintenanceTableBody) {
+                this.maintenanceTableBody.addEventListener('click', (event) => this.handleMaintenanceTableClick(event));
             }
 
             if (this.prevButton) {
@@ -259,6 +302,9 @@
             const statusClass = statusClassMap[status] || statusClassMap.Checking;
             const lastChecked = this.relativeTime(target.lastCheckedAt);
             const nextDue = this.relativeTime(target.nextDueAt);
+            const maintenanceIndicator = target.hasActiveMaintenance
+                ? '<span class="badge bg-warning text-dark ms-2" title="Under maintenance"><i class="fa fa-tools me-1"></i>Maintenance</span>'
+                : '';
 
             const actions = [];
 
@@ -269,6 +315,7 @@
             actions.push(`<button type="button" class="btn btn-outline-secondary btn-sm" data-action="outages" data-id="${target.id}" aria-label="View outages for ${this.escapeHtml(target.name)}"><i class="fa fa-bolt me-1" aria-hidden="true"></i>View outages</button>`);
 
             if (this.permissions.canEdit) {
+                actions.push(`<button type="button" class="btn btn-outline-warning btn-sm" data-action="policy" data-id="${target.id}" aria-label="Configure alert policy for ${this.escapeHtml(target.name)}"><i class="fa fa-bell me-1" aria-hidden="true"></i>Alert Policy</button>`);
                 actions.push(`<button type="button" class="btn btn-outline-info btn-sm" data-action="edit" data-id="${target.id}" aria-label="Edit ${this.escapeHtml(target.name)}"><i class="fa fa-pen me-1" aria-hidden="true"></i>Edit</button>`);
             }
 
@@ -285,7 +332,7 @@
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <h5 class="mb-1">${escapedName}</h5>
-                                <span class="badge bg-light text-dark">${typeLabel}</span>
+                                <span class="badge bg-light text-dark">${typeLabel}</span>${maintenanceIndicator}
                             </div>
                         </div>
                         <div class="mt-3 small">
@@ -409,6 +456,309 @@
             if (this.manageForm) {
                 this.manageForm.reset();
             }
+        },
+
+        resetAlertPolicyForm() {
+            this.alertPolicyTargetId = null;
+            if (this.alertPolicyErrors) {
+                this.alertPolicyErrors.classList.add('d-none');
+                this.alertPolicyErrors.textContent = '';
+            }
+
+            if (this.alertPolicyForm) {
+                this.alertPolicyForm.reset();
+            }
+
+            if (this.alertPolicyInheritance) {
+                this.alertPolicyInheritance.textContent = '';
+            }
+
+            const titleEl = document.getElementById('monitoring-alert-policy-modal-title');
+            if (titleEl) {
+                titleEl.textContent = 'Alert policy';
+            }
+        },
+
+        showAlertPolicyError(message) {
+            if (!this.alertPolicyErrors) {
+                return;
+            }
+
+            if (message) {
+                this.alertPolicyErrors.classList.remove('d-none');
+                this.alertPolicyErrors.textContent = message;
+            } else {
+                this.alertPolicyErrors.classList.add('d-none');
+                this.alertPolicyErrors.textContent = '';
+            }
+        },
+
+        openAlertPolicy(id) {
+            if (!this.permissions.canEdit || !this.alertPolicyModal || !this.alertPolicyForm) {
+                return;
+            }
+
+            const target = this.targetCache.get(id);
+            if (!target) {
+                this.handleError(null, 'Unable to load the selected service. Please refresh and try again.');
+                return;
+            }
+
+            this.resetAlertPolicyForm();
+            this.alertPolicyTargetId = id;
+
+            const titleEl = document.getElementById('monitoring-alert-policy-modal-title');
+            if (titleEl) {
+                titleEl.textContent = `Alert policy · ${this.escapeHtml(target.name ?? '')}`;
+            }
+
+            this.toggleButtonState(this.alertPolicySubmit, true);
+            this.request(`/api/monitoring/targets/${id}/alert-policy`, { method: 'GET' })
+                .then((policy) => {
+                    this.populateAlertPolicyForm(policy);
+                    this.alertPolicyModal.show();
+                })
+                .catch((error) => this.showAlertPolicyError(this.extractErrorMessage(error) || 'Failed to load alert policy.'))
+                .finally(() => this.toggleButtonState(this.alertPolicySubmit, false));
+        },
+
+        populateAlertPolicyForm(policy) {
+            if (!this.alertPolicyForm) {
+                return;
+            }
+
+            const form = this.alertPolicyForm;
+            form.querySelector('#monitoring-alert-policy-target-id').value = policy?.targetId ?? '';
+            form.querySelector('#monitoring-alert-policy-enabled').checked = Boolean(policy?.enabled);
+            form.querySelector('#monitoring-alert-policy-notify-after').value = policy?.notifyAfterFailures ?? 1;
+            form.querySelector('#monitoring-alert-policy-repeat').value = policy?.repeatMinutes ?? 60;
+            form.querySelector('#monitoring-alert-policy-recover').value = policy?.recoverQuietMinutes ?? 10;
+            form.querySelector('#monitoring-alert-policy-channels').value = policy?.channelsJson ?? '';
+            form.querySelector('#monitoring-alert-policy-suppress').checked = Boolean(policy?.suppressDuringMaintenance);
+
+            if (this.alertPolicyInheritance) {
+                this.alertPolicyInheritance.textContent = policy?.isInherited
+                    ? 'Using global defaults.'
+                    : 'Custom policy for this service.';
+            }
+        },
+
+        submitAlertPolicy(event) {
+            event.preventDefault();
+            if (!this.alertPolicyForm || !this.alertPolicyTargetId) {
+                return;
+            }
+
+            const form = this.alertPolicyForm;
+            this.showAlertPolicyError(null);
+
+            const channelsValue = this.normalizeString(form.querySelector('#monitoring-alert-policy-channels').value);
+            if (channelsValue && !this.validateJson(channelsValue)) {
+                this.showAlertPolicyError('Channels JSON must be valid.');
+                return;
+            }
+
+            const payload = {
+                targetId: this.alertPolicyTargetId,
+                enabled: form.querySelector('#monitoring-alert-policy-enabled').checked,
+                notifyAfterFailures: this.toNumber(form.querySelector('#monitoring-alert-policy-notify-after').value, 1),
+                repeatMinutes: this.toNumber(form.querySelector('#monitoring-alert-policy-repeat').value, 60),
+                recoverQuietMinutes: this.toNumber(form.querySelector('#monitoring-alert-policy-recover').value, 10),
+                channelsJson: channelsValue,
+                suppressDuringMaintenance: form.querySelector('#monitoring-alert-policy-suppress').checked
+            };
+
+            this.toggleButtonState(this.alertPolicySubmit, true);
+            this.request(`/api/monitoring/targets/${this.alertPolicyTargetId}/alert-policy`, {
+                method: 'PUT',
+                body: payload
+            })
+                .then(() => {
+                    abp.notify.success('Alert policy saved.');
+                    if (this.alertPolicyModal) {
+                        this.alertPolicyModal.hide();
+                    }
+                })
+                .catch((error) => this.showAlertPolicyError(this.extractErrorMessage(error) || 'Failed to save alert policy.'))
+                .finally(() => this.toggleButtonState(this.alertPolicySubmit, false));
+        },
+
+        openMaintenanceModal(targetId = null) {
+            if (!this.permissions.canEdit || !this.maintenanceModal || !this.maintenanceForm) {
+                return;
+            }
+
+            this.maintenanceFilterTargetId = targetId;
+            this.resetMaintenanceForm();
+            this.populateMaintenanceTargets(targetId);
+            this.loadMaintenanceWindows(targetId);
+            this.maintenanceModal.show();
+        },
+
+        populateMaintenanceTargets(selectedId) {
+            if (!this.maintenanceTargetSelect) {
+                return;
+            }
+
+            const options = ['<option value="">All services (global)</option>'];
+            const entries = Array.from(this.targetCache.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            entries.forEach((target) => {
+                const selected = selectedId && target.id === selectedId ? ' selected' : '';
+                options.push(`<option value="${target.id}"${selected}>${this.escapeHtml(target.name ?? target.id)}</option>`);
+            });
+
+            this.maintenanceTargetSelect.innerHTML = options.join('');
+
+            if (selectedId) {
+                this.maintenanceTargetSelect.value = selectedId;
+            } else {
+                this.maintenanceTargetSelect.value = '';
+            }
+        },
+
+        resetMaintenanceForm() {
+            if (this.maintenanceErrors) {
+                this.maintenanceErrors.classList.add('d-none');
+                this.maintenanceErrors.textContent = '';
+            }
+
+            if (this.maintenanceForm) {
+                this.maintenanceForm.reset();
+            }
+        },
+
+        showMaintenanceError(message) {
+            if (!this.maintenanceErrors) {
+                return;
+            }
+
+            if (message) {
+                this.maintenanceErrors.classList.remove('d-none');
+                this.maintenanceErrors.textContent = message;
+            } else {
+                this.maintenanceErrors.classList.add('d-none');
+                this.maintenanceErrors.textContent = '';
+            }
+        },
+
+        loadMaintenanceWindows(targetId) {
+            const query = targetId ? `?targetId=${encodeURIComponent(targetId)}` : '';
+            this.request(`/api/monitoring/maintenance${query}`, { method: 'GET' })
+                .then((windows) => this.renderMaintenanceTable(Array.isArray(windows) ? windows : []))
+                .catch((error) => this.showMaintenanceError(this.extractErrorMessage(error) || 'Failed to load maintenance windows.'));
+        },
+
+        renderMaintenanceTable(windows) {
+            if (!this.maintenanceTableBody) {
+                return;
+            }
+
+            if (!windows.length) {
+                this.maintenanceTableBody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No maintenance windows scheduled.</td></tr>';
+                return;
+            }
+
+            const rows = windows.map((window) => {
+                const started = this.formatDateTime(window.startUtc);
+                const ended = this.formatDateTime(window.endUtc);
+                const targetName = window.targetId
+                    ? (this.targetCache.get(window.targetId)?.name ?? `Target ${window.targetId}`)
+                    : 'All services';
+                const reason = this.escapeHtml(window.reason ?? '—');
+                const deleteButton = this.permissions.canEdit
+                    ? `<button type="button" class="btn btn-link btn-sm text-danger" data-maintenance-action="delete" data-id="${window.id}"><i class="fa fa-trash me-1" aria-hidden="true"></i>Delete</button>`
+                    : '';
+
+                return `<tr>
+                    <td>${started}</td>
+                    <td>${ended}</td>
+                    <td>${this.escapeHtml(targetName)}</td>
+                    <td>${reason || '—'}</td>
+                    <td class="text-end">${deleteButton}</td>
+                </tr>`;
+            });
+
+            this.maintenanceTableBody.innerHTML = rows.join('');
+        },
+
+        submitMaintenance(event) {
+            event.preventDefault();
+            if (!this.maintenanceForm) {
+                return;
+            }
+
+            this.showMaintenanceError(null);
+
+            const targetIdValue = this.normalizeString(this.maintenanceTargetSelect?.value);
+            const startValue = this.normalizeString(this.maintenanceForm.querySelector('#monitoring-maintenance-start').value);
+            const endValue = this.normalizeString(this.maintenanceForm.querySelector('#monitoring-maintenance-end').value);
+            const reasonValue = this.normalizeString(this.maintenanceForm.querySelector('#monitoring-maintenance-reason').value);
+
+            if (!startValue || !endValue) {
+                this.showMaintenanceError('Start and end times are required.');
+                return;
+            }
+
+            const payload = {
+                targetId: targetIdValue || null,
+                startUtc: this.toIsoUtcString(startValue),
+                endUtc: this.toIsoUtcString(endValue),
+                reason: reasonValue
+            };
+
+            this.toggleButtonState(this.maintenanceSubmit, true);
+            this.request('/api/monitoring/maintenance', {
+                method: 'POST',
+                body: payload
+            })
+                .then(() => {
+                    abp.notify.success('Maintenance window scheduled.');
+                    this.resetMaintenanceForm();
+                    this.populateMaintenanceTargets(this.maintenanceFilterTargetId);
+                    this.loadMaintenanceWindows(this.maintenanceFilterTargetId);
+                    this.refresh(false);
+                })
+                .catch((error) => this.showMaintenanceError(this.extractErrorMessage(error) || 'Failed to create maintenance window.'))
+                .finally(() => this.toggleButtonState(this.maintenanceSubmit, false));
+        },
+
+        handleMaintenanceTableClick(event) {
+            const actionEl = event.target.closest('[data-maintenance-action]');
+            if (!actionEl) {
+                return;
+            }
+
+            const action = actionEl.getAttribute('data-maintenance-action');
+            const id = actionEl.getAttribute('data-id');
+            if (!action || !id) {
+                return;
+            }
+
+            if (action === 'delete') {
+                this.deleteMaintenance(id);
+            }
+        },
+
+        deleteMaintenance(id) {
+            if (!this.permissions.canEdit) {
+                return;
+            }
+
+            abp.message.confirm('Delete this maintenance window?')
+                .then((confirmed) => {
+                    if (!confirmed) {
+                        return;
+                    }
+
+                    this.request(`/api/monitoring/maintenance/${id}`, { method: 'DELETE' })
+                        .then(() => {
+                            abp.notify.info('Maintenance window removed.');
+                            this.loadMaintenanceWindows(this.maintenanceFilterTargetId);
+                            this.refresh(false);
+                        })
+                        .catch((error) => this.showMaintenanceError(this.extractErrorMessage(error) || 'Failed to delete maintenance window.'));
+                });
         },
 
         setFormTitle(title) {
@@ -921,6 +1271,27 @@
             return trimmed.length ? trimmed : null;
         },
 
+        toIsoUtcString(value) {
+            const normalized = this.normalizeString(value);
+            if (!normalized) {
+                return null;
+            }
+
+            if (normalized.endsWith('Z')) {
+                return normalized;
+            }
+
+            if (normalized.length === 16) { // YYYY-MM-DDTHH:mm
+                return `${normalized}:00Z`;
+            }
+
+            if (normalized.length === 19) { // YYYY-MM-DDTHH:mm:ss
+                return `${normalized}Z`;
+            }
+
+            return `${normalized}Z`;
+        },
+
         validateJson(str) {
             if (!str) {
                 return true;
@@ -953,6 +1324,9 @@
                 break;
             case 'outages':
                 window.monitoringTargets.showOutages(id);
+                break;
+            case 'policy':
+                window.monitoringTargets.openAlertPolicy(id);
                 break;
             case 'edit':
                 window.monitoringTargets.openEdit(id);

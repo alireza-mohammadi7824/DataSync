@@ -100,6 +100,25 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
                 .Take(maxResultCount));
 
         var dtos = ObjectMapper.Map<List<MonitoringTarget>, List<MonitoringTargetDto>>(items);
+
+        if (dtos.Count > 0)
+        {
+            var now = Clock.Now;
+            var targetIds = dtos.Select(x => x.Id).ToList();
+            var activeWindows = await AsyncExecuter.ToListAsync(
+                _maintenanceRepository.Where(
+                    window => window.StartUtc <= now && window.EndUtc >= now &&
+                              (window.TargetId == null || targetIds.Contains(window.TargetId.Value))));
+
+            var hasGlobal = activeWindows.Any(window => window.TargetId == null);
+            var targeted = new HashSet<Guid>(activeWindows.Where(window => window.TargetId.HasValue).Select(window => window.TargetId!.Value));
+
+            foreach (var dto in dtos)
+            {
+                dto.HasActiveMaintenance = hasGlobal || targeted.Contains(dto.Id);
+            }
+        }
+
         return new PagedResultDto<MonitoringTargetDto>(totalCount, dtos);
     }
 
@@ -107,7 +126,14 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
         var entity = await _repository.GetAsync(id);
-        return ObjectMapper.Map<MonitoringTarget, MonitoringTargetDto>(entity);
+        var dto = ObjectMapper.Map<MonitoringTarget, MonitoringTargetDto>(entity);
+
+        var now = Clock.Now;
+        dto.HasActiveMaintenance = await _maintenanceRepository.AnyAsync(
+            window => window.StartUtc <= now && window.EndUtc >= now &&
+                      (window.TargetId == null || window.TargetId == id));
+
+        return dto;
     }
 
     public async Task<MonitoringTargetDto> CreateAsync(CreateUpdateMonitoringTargetDto input)
@@ -269,7 +295,27 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
             queryable
                 .OrderBy(target => target.Name));
 
-        return ObjectMapper.Map<List<MonitoringTarget>, List<MonitoringTargetDto>>(targets);
+        var dtos = ObjectMapper.Map<List<MonitoringTarget>, List<MonitoringTargetDto>>(targets);
+
+        if (dtos.Count > 0)
+        {
+            var now = Clock.Now;
+            var ids = dtos.Select(x => x.Id).ToList();
+            var activeWindows = await AsyncExecuter.ToListAsync(
+                _maintenanceRepository.Where(
+                    window => window.StartUtc <= now && window.EndUtc >= now &&
+                              (window.TargetId == null || ids.Contains(window.TargetId.Value))));
+
+            var hasGlobal = activeWindows.Any(window => window.TargetId == null);
+            var targeted = new HashSet<Guid>(activeWindows.Where(window => window.TargetId.HasValue).Select(window => window.TargetId!.Value));
+
+            foreach (var dto in dtos)
+            {
+                dto.HasActiveMaintenance = hasGlobal || targeted.Contains(dto.Id);
+            }
+        }
+
+        return dtos;
     }
 
     public async Task<List<OutageWindowDto>> GetRecentOutagesAsync(Guid targetId, int count = 10)
@@ -402,7 +448,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
         var windows = await AsyncExecuter.ToListAsync(
             queryable
-                .OrderBy(x => x.StartUtc));
+                .OrderByDescending(x => x.StartUtc));
 
         return ObjectMapper.Map<List<MaintenanceWindow>, List<MaintenanceWindowDto>>(windows);
     }
@@ -744,7 +790,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         }
 
         var timestamp = Clock.Now;
-        await MonitoringTargetCheckProcessor.ApplyResultAsync(
+        _ = await MonitoringTargetCheckProcessor.ApplyResultAsync(
             target,
             result,
             timestamp,

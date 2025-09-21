@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Monitoring.Options;
@@ -5,6 +6,7 @@ namespace Monitoring.Options;
 public class MonitoringOptions
 {
     public AlertDefaultsOptions AlertDefaults { get; set; } = new();
+    public NotificationChannelOptions Notifications { get; set; } = new();
 
     public class AlertDefaultsOptions
     {
@@ -19,6 +21,35 @@ public class MonitoringOptions
         public bool SuppressDuringMaintenance { get; set; } = true;
 
         public Dictionary<string, string[]>? DefaultChannels { get; set; }
+            = new();
+    }
+
+    public class NotificationChannelOptions
+    {
+        public EmailChannelOptions Email { get; set; } = new();
+        public TelegramChannelOptions Telegram { get; set; } = new();
+        public WebhookChannelOptions Webhook { get; set; } = new();
+    }
+
+    public class EmailChannelOptions
+    {
+        public string? FromAddress { get; set; }
+            = null;
+
+        public string SubjectPrefix { get; set; } = "[Monitoring]";
+    }
+
+    public class TelegramChannelOptions
+    {
+        public string? BotToken { get; set; }
+            = null;
+
+        public string[] ChatIds { get; set; } = Array.Empty<string>();
+    }
+
+    public class WebhookChannelOptions
+    {
+        public Dictionary<string, string>? DefaultHeaders { get; set; }
             = new();
     }
 }

@@ -38,4 +38,6 @@ public class MonitoringTargetDto : FullAuditedEntityDto<Guid>
     public DateTime? FirstDownAt { get; set; }
 
     public DateTime? LastUpAt { get; set; }
+
+    public bool HasActiveMaintenance { get; set; }
 }

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Monitoring.Alerts;
 using Monitoring.HealthChecks;
 using Monitoring.Options;
 using Monitoring.Workers;
@@ -30,6 +31,7 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddTransient<TcpCheckProvider>();
         context.Services.AddTransient<RedisCheckProvider>();
         context.Services.AddTransient<IHealthCheckProviderResolver, HealthCheckProviderResolver>();
+        context.Services.AddTransient<INotificationChannelResolver, NotificationChannelResolver>();
         context.Services.AddHostedService<MonitoringWorker>();
 
         var configuration = context.Services.GetConfiguration();

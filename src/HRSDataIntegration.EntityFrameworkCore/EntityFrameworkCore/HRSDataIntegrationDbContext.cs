@@ -284,6 +284,8 @@ public class HRSDataIntegrationDbContext :
             b.ToTable(MonitoringConsts.DbTablePrefix + "Outages", MonitoringConsts.DbSchema);
             b.ConfigureByConvention();
             b.Property(x => x.FailureCount).IsRequired();
+            b.Property(x => x.LastAlertAt);
+            b.Property(x => x.AlertsSent).HasDefaultValue(0);
             b.HasIndex(x => new { x.TargetId, x.StartedAt })
                 .HasDatabaseName("IX_Target_StartedAt")
                 .IsDescending(true, true);

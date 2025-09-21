@@ -10,6 +10,8 @@ public class OutageWindow : Entity<Guid>
     public DateTime? EndedAt { get; private set; }
     public int FailureCount { get; private set; }
     public int? TotalDurationSec { get; private set; }
+    public DateTime? LastAlertAt { get; private set; }
+    public int AlertsSent { get; private set; }
 
     private OutageWindow()
     {
@@ -45,5 +47,18 @@ public class OutageWindow : Entity<Guid>
         EndedAt = null;
         FailureCount = initialFailureCount < 1 ? 1 : initialFailureCount;
         TotalDurationSec = null;
+        ResetAlerts();
+    }
+
+    public void RecordAlert(DateTime timestamp)
+    {
+        LastAlertAt = timestamp;
+        AlertsSent++;
+    }
+
+    public void ResetAlerts()
+    {
+        LastAlertAt = null;
+        AlertsSent = 0;
     }
 }

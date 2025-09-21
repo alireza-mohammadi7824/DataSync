@@ -14,7 +14,7 @@ internal static class MonitoringTargetCheckProcessor
     private const string LastErrorSummaryPropertyName = "Monitoring:LastErrorSummary";
     private const string LastTriggerSourcePropertyName = "Monitoring:LastTriggerSource";
 
-    public static async Task ApplyResultAsync(
+    public static async Task<MonitoringCheckOutcome> ApplyResultAsync(
         MonitoringTarget target,
         HealthCheckResult result,
         DateTime timestamp,
@@ -82,7 +82,7 @@ internal static class MonitoringTargetCheckProcessor
             await historyRepository.InsertAsync(history, autoSave: true, cancellationToken);
         }
 
-        await ManageOutageWindowAsync(
+        var outageTransition = await ManageOutageWindowAsync(
             target,
             previousStatus,
             newStatus,
@@ -90,9 +90,17 @@ internal static class MonitoringTargetCheckProcessor
             outageRepository,
             guidGenerator,
             cancellationToken);
+
+        return new MonitoringCheckOutcome(
+            previousStatus,
+            newStatus,
+            outageTransition.ActiveOutage,
+            outageTransition.ClosedOutage,
+            outageTransition.OutageStarted,
+            outageTransition.OutageClosed);
     }
 
-    private static async Task ManageOutageWindowAsync(
+    private static async Task<OutageTransitionResult> ManageOutageWindowAsync(
         MonitoringTarget target,
         ServiceStatus previousStatus,
         ServiceStatus newStatus,
@@ -101,6 +109,11 @@ internal static class MonitoringTargetCheckProcessor
         IGuidGenerator guidGenerator,
         CancellationToken cancellationToken)
     {
+        OutageWindow? activeOutage = null;
+        OutageWindow? closedOutage = null;
+        var outageStarted = false;
+        var outageClosed = false;
+
         if (newStatus == ServiceStatus.Offline)
         {
             var outage = await outageRepository.FirstOrDefaultAsync(
@@ -118,11 +131,15 @@ internal static class MonitoringTargetCheckProcessor
                         failureCount: 1);
 
                     await outageRepository.InsertAsync(newOutage, autoSave: true, cancellationToken);
+                    activeOutage = newOutage;
+                    outageStarted = true;
                 }
                 else
                 {
                     outage.MarkAsStarted(timestamp, 1);
                     await outageRepository.UpdateAsync(outage, autoSave: true, cancellationToken);
+                    activeOutage = outage;
+                    outageStarted = true;
                 }
             }
             else
@@ -136,11 +153,14 @@ internal static class MonitoringTargetCheckProcessor
                         failureCount: 1);
 
                     await outageRepository.InsertAsync(newOutage, autoSave: true, cancellationToken);
+                    activeOutage = newOutage;
+                    outageStarted = true;
                 }
                 else
                 {
                     outage.IncrementFailure();
                     await outageRepository.UpdateAsync(outage, autoSave: true, cancellationToken);
+                    activeOutage = outage;
                 }
             }
         }
@@ -154,7 +174,57 @@ internal static class MonitoringTargetCheckProcessor
             {
                 outage.Close(timestamp);
                 await outageRepository.UpdateAsync(outage, autoSave: true, cancellationToken);
+                closedOutage = outage;
+                outageClosed = true;
             }
         }
+
+        return new OutageTransitionResult(activeOutage, closedOutage, outageStarted, outageClosed);
     }
+}
+
+internal sealed class MonitoringCheckOutcome
+{
+    public MonitoringCheckOutcome(
+        ServiceStatus previousStatus,
+        ServiceStatus currentStatus,
+        OutageWindow? activeOutage,
+        OutageWindow? closedOutage,
+        bool outageStarted,
+        bool outageClosed)
+    {
+        PreviousStatus = previousStatus;
+        CurrentStatus = currentStatus;
+        ActiveOutage = activeOutage;
+        ClosedOutage = closedOutage;
+        OutageStarted = outageStarted;
+        OutageClosed = outageClosed;
+    }
+
+    public ServiceStatus PreviousStatus { get; }
+    public ServiceStatus CurrentStatus { get; }
+    public OutageWindow? ActiveOutage { get; }
+    public OutageWindow? ClosedOutage { get; }
+    public bool OutageStarted { get; }
+    public bool OutageClosed { get; }
+}
+
+internal sealed class OutageTransitionResult
+{
+    public OutageTransitionResult(
+        OutageWindow? activeOutage,
+        OutageWindow? closedOutage,
+        bool outageStarted,
+        bool outageClosed)
+    {
+        ActiveOutage = activeOutage;
+        ClosedOutage = closedOutage;
+        OutageStarted = outageStarted;
+        OutageClosed = outageClosed;
+    }
+
+    public OutageWindow? ActiveOutage { get; }
+    public OutageWindow? ClosedOutage { get; }
+    public bool OutageStarted { get; }
+    public bool OutageClosed { get; }
 }

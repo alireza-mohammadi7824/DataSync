@@ -246,6 +246,13 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
             b.Property<int>("FailureCount")
                 .HasColumnType("int");
 
+            b.Property<int>("AlertsSent")
+                .HasColumnType("int")
+                .HasDefaultValue(0);
+
+            b.Property<DateTime?>("LastAlertAt")
+                .HasColumnType("datetime2");
+
             b.Property<DateTime>("StartedAt")
                 .HasColumnType("datetime2");
 

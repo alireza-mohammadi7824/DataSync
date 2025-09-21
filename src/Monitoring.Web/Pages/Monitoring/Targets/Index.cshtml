@@ -45,6 +45,14 @@
             <p class="text-muted mb-0">Track and manage the health of your monitored targets.</p>
         </div>
         <div class="d-flex flex-wrap gap-2">
+            @if (Model.CanEdit)
+            {
+                <button id="monitoring-maintenance-button" class="btn btn-outline-secondary btn-sm" type="button">
+                    <i class="fa fa-wrench me-1"></i>
+                    Maintenance
+                </button>
+            }
+
             @if (Model.CanCreate)
             {
                 <button id="monitoring-new-button" class="btn btn-success btn-sm" type="button">
@@ -210,6 +218,121 @@
     </div>
 </div>
 
+<div class="modal fade" id="monitoring-alert-policy-modal" tabindex="-1" aria-hidden="true" aria-labelledby="monitoring-alert-policy-modal-title">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="monitoring-alert-policy-form">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="monitoring-alert-policy-modal-title">Alert policy</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="monitoring-alert-policy-errors" class="alert alert-danger d-none" role="alert"></div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="monitoring-alert-policy-enabled" name="enabled">
+                        <label class="form-check-label" for="monitoring-alert-policy-enabled">Alerts enabled</label>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label" for="monitoring-alert-policy-notify-after">Notify after failures</label>
+                            <input type="number" class="form-control" id="monitoring-alert-policy-notify-after" name="notifyAfterFailures" min="1" required>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label" for="monitoring-alert-policy-repeat">Repeat every (minutes)</label>
+                            <input type="number" class="form-control" id="monitoring-alert-policy-repeat" name="repeatMinutes" min="1" required>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label" for="monitoring-alert-policy-recover">Recovery quiet period (minutes)</label>
+                            <input type="number" class="form-control" id="monitoring-alert-policy-recover" name="recoverQuietMinutes" min="0" required>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="monitoring-alert-policy-channels">Channels (JSON)</label>
+                            <textarea class="form-control font-monospace" id="monitoring-alert-policy-channels" name="channelsJson" rows="5" spellcheck="false" placeholder="{ }"></textarea>
+                            <div class="form-text">Example: { "email": ["ops@example.com"], "webhook": ["https://hooks.example"], "telegram": ["-100123"] }</div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" id="monitoring-alert-policy-suppress" name="suppressDuringMaintenance">
+                                <label class="form-check-label" for="monitoring-alert-policy-suppress">Suppress during maintenance windows</label>
+                            </div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="monitoring-alert-policy-target-id" name="targetId">
+                    <div class="mt-3 small text-muted" id="monitoring-alert-policy-inheritance"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <span class="spinner-border spinner-border-sm align-middle me-2 d-none" role="status" aria-hidden="true"></span>
+                        <span data-role="submit-label">Save</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="monitoring-maintenance-modal" tabindex="-1" aria-hidden="true" aria-labelledby="monitoring-maintenance-modal-title">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="monitoring-maintenance-modal-title">Maintenance windows</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="monitoring-maintenance-errors" class="alert alert-danger d-none" role="alert"></div>
+                <form id="monitoring-maintenance-form" class="border rounded p-3 mb-4">
+                    <h6 class="mb-3">Schedule maintenance</h6>
+                    <div class="row g-3 align-items-end">
+                        <div class="col-12 col-md-4">
+                            <label class="form-label" for="monitoring-maintenance-target">Target (optional)</label>
+                            <select id="monitoring-maintenance-target" name="targetId" class="form-select">
+                                <option value="">All services (global)</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label" for="monitoring-maintenance-start">Start (UTC)</label>
+                            <input type="datetime-local" class="form-control" id="monitoring-maintenance-start" name="startUtc" required>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label" for="monitoring-maintenance-end">End (UTC)</label>
+                            <input type="datetime-local" class="form-control" id="monitoring-maintenance-end" name="endUtc" required>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="monitoring-maintenance-reason">Reason</label>
+                            <input type="text" class="form-control" id="monitoring-maintenance-reason" name="reason" maxlength="256" placeholder="Optional">
+                        </div>
+                    </div>
+                    <div class="mt-3 text-end">
+                        <button type="submit" class="btn btn-primary btn-sm">
+                            <span class="spinner-border spinner-border-sm align-middle me-2 d-none" role="status" aria-hidden="true"></span>
+                            Schedule maintenance
+                        </button>
+                    </div>
+                </form>
+
+                <div class="table-responsive">
+                    <table class="table table-sm" id="monitoring-maintenance-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Start (UTC)</th>
+                                <th scope="col">End (UTC)</th>
+                                <th scope="col">Target</th>
+                                <th scope="col">Reason</th>
+                                <th scope="col" class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @section scripts {
     <abp-script src="~/js/monitoring.targets.js"></abp-script>
     <script>
@@ -236,6 +359,18 @@
                     manageForm: document.getElementById('monitoring-manage-form'),
                     manageErrors: document.getElementById('monitoring-manage-errors'),
                     manageSubmitButton: document.querySelector('#monitoring-manage-form button[type="submit"]'),
+                    alertPolicyModal: document.getElementById('monitoring-alert-policy-modal'),
+                    alertPolicyForm: document.getElementById('monitoring-alert-policy-form'),
+                    alertPolicyErrors: document.getElementById('monitoring-alert-policy-errors'),
+                    alertPolicySubmit: document.querySelector('#monitoring-alert-policy-form button[type="submit"]'),
+                    alertPolicyInheritance: document.getElementById('monitoring-alert-policy-inheritance'),
+                    maintenanceButton: document.getElementById('monitoring-maintenance-button'),
+                    maintenanceModal: document.getElementById('monitoring-maintenance-modal'),
+                    maintenanceForm: document.getElementById('monitoring-maintenance-form'),
+                    maintenanceErrors: document.getElementById('monitoring-maintenance-errors'),
+                    maintenanceSubmit: document.querySelector('#monitoring-maintenance-form button[type="submit"]'),
+                    maintenanceTableBody: document.querySelector('#monitoring-maintenance-table tbody'),
+                    maintenanceTargetSelect: document.getElementById('monitoring-maintenance-target'),
                     pageInfo: document.getElementById('monitoring-page-info'),
                     prevButton: document.getElementById('monitoring-prev-page'),
                     nextButton: document.getElementById('monitoring-next-page')
