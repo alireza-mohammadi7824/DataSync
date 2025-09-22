@@ -48,7 +48,8 @@ public sealed class HealthCheckExecutor
     {
         var timeoutSeconds = ResolveTimeoutSeconds(target);
         var attemptTimeout = TimeSpan.FromSeconds(timeoutSeconds + TimeoutBufferSeconds);
-        var lockTtl = TimeSpan.FromSeconds((timeoutSeconds * 2) + 5);
+        var lockBuffer = Math.Max(1, _options.Execution.LockTtlBufferSeconds);
+        var lockTtl = TimeSpan.FromSeconds((timeoutSeconds * 2) + lockBuffer);
 
         var lockHandle = await _runLock.TryAcquireAsync(target.Id, lockTtl, cancellationToken);
         if (lockHandle == null)
@@ -117,13 +118,19 @@ public sealed class HealthCheckExecutor
                         CompletedAt = completedAt
                     };
 
+                    var outcome = providerResult.IsSkipped
+                        ? "skipped"
+                        : providerResult.IsSuccess
+                            ? "success"
+                            : "failure";
+
                     _logger.LogInformation(
                         "Health check attempt {Attempt} for target {TargetId} via {Provider} ({TriggerSource}) finished {Outcome} in {Duration}ms",
                         attemptNumber,
                         target.Id,
                         providerType,
                         triggerSource,
-                        providerResult.IsSuccess ? "success" : "failure",
+                        outcome,
                         durationMs);
 
                     if (providerResult.IsSuccess)

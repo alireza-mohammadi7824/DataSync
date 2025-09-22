@@ -1,7 +1,9 @@
 using System;
-using System.Linq;
-using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Monitoring.Execution;
+using Monitoring.Options;
 using Shouldly;
 using Volo.Abp.Guids;
 using Xunit;
@@ -11,29 +13,28 @@ namespace HRSDataIntegration.Application.Tests.Monitoring;
 public class BulkCheckQueueTests
 {
     [Fact]
-    public async Task Enqueue_ShouldTrackStatus()
+    public void Enqueue_ShouldInitializeBatchStatus()
     {
-        var guidGenerator = new DeterministicGuidGenerator();
-        var queue = new BulkCheckQueue(guidGenerator);
+        var services = new ServiceCollection();
+        using var provider = services.BuildServiceProvider();
+
+        var queue = new BulkCheckQueue(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            new DeterministicGuidGenerator(),
+            Options.Create(new MonitoringOptions()),
+            NullLogger<BulkCheckQueue>.Instance);
+
         var targetIds = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
 
-        var result = await queue.EnqueueAsync(targetIds);
+        var batchId = queue.Enqueue(targetIds);
 
-        result.TotalQueued.ShouldBe(3);
-
-        var status = queue.GetStatus(result.BatchId);
-        status.TotalTargets.ShouldBe(3);
+        var status = queue.GetStatus(batchId);
+        status.BatchId.ShouldBe(batchId);
+        status.Total.ShouldBe(3);
         status.Queued.ShouldBe(3);
-        status.Completed.ShouldBe(0);
-
-        queue.TryBegin(result.BatchId).ShouldBeTrue();
-        queue.Complete(result.BatchId, success: true, skipped: false);
-
-        status = queue.GetStatus(result.BatchId);
         status.Running.ShouldBe(0);
-        status.Completed.ShouldBe(1);
-        status.Succeeded.ShouldBe(1);
-        status.Queued.ShouldBe(2);
+        status.Completed.ShouldBe(0);
+        status.Failed.ShouldBe(0);
     }
 
     private sealed class DeterministicGuidGenerator : IGuidGenerator

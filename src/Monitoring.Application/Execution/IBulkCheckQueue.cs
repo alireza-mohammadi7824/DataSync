@@ -7,22 +7,20 @@ namespace Monitoring.Execution;
 
 public interface IBulkCheckQueue
 {
-    Task<CheckBatchEnqueueResult> EnqueueAsync(IEnumerable<Guid> targetIds, CancellationToken cancellationToken = default);
+    Guid Enqueue(IEnumerable<Guid> targetIds);
 
-    CheckBatchStatus GetStatus(Guid batchId);
+    BulkStatus GetStatus(Guid batchId);
+
+    Task StartAsync(CancellationToken cancellationToken);
 }
 
-public readonly record struct CheckBatchEnqueueResult(Guid BatchId, int TotalQueued);
-
-public readonly record struct CheckBatchStatus(
+public sealed record BulkStatus(
     Guid BatchId,
     int Total,
     int Queued,
     int Running,
     int Completed,
-    int Succeeded,
-    int Failed,
-    int Skipped)
+    int Failed)
 {
-    public static CheckBatchStatus Empty(Guid batchId) => new(batchId, 0, 0, 0, 0, 0, 0, 0);
+    public static BulkStatus Empty(Guid batchId) => new(batchId, 0, 0, 0, 0, 0);
 }

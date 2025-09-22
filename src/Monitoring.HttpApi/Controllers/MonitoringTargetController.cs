@@ -145,7 +145,7 @@ public class MonitoringTargetController : MonitoringController
     public virtual async Task<IActionResult> EnqueueCheckAllAsync()
     {
         var result = await _monitoringTargetAppService.EnqueueCheckAllAsync();
-        return AcceptedAtAction(nameof(GetCheckBatchStatusAsync), new { id = result.BatchId }, result);
+        return Accepted(new { batchId = result.BatchId });
     }
 
     [HttpGet]

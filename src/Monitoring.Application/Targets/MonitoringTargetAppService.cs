@@ -252,12 +252,11 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
                 .Select(target => target.Id),
             CancellationTokenProvider.Token);
 
-        var enqueueResult = await _bulkCheckQueue.EnqueueAsync(ids, CancellationTokenProvider.Token);
+        var batchId = _bulkCheckQueue.Enqueue(ids);
 
         return new CheckBatchEnqueueResultDto
         {
-            BatchId = enqueueResult.BatchId,
-            TotalTargets = enqueueResult.TotalQueued
+            BatchId = batchId
         };
     }
 
@@ -273,9 +272,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
             Queued = status.Queued,
             Running = status.Running,
             Completed = status.Completed,
-            Succeeded = status.Succeeded,
-            Failed = status.Failed,
-            Skipped = status.Skipped
+            Failed = status.Failed
         };
     }
 
