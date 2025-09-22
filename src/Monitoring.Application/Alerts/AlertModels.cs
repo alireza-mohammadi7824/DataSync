@@ -62,6 +62,44 @@ public sealed class AlertPayload
         ErrorSummary = errorSummary;
         ResponseTimeMs = responseTimeMs;
         CurrentOutage = currentOutage;
+
+        TargetId = Guid.Empty;
+        TargetName = string.Empty;
+        Status = string.Empty;
+        StartedAt = eventAt;
+        EndedAt = currentOutage?.EndedAt;
+        Duration = currentOutage != null && currentOutage.TotalDurationSec.HasValue
+            ? TimeSpan.FromSeconds(currentOutage.TotalDurationSec.Value)
+            : null;
+        EventTypeName = eventType.ToString();
+        Summary = errorSummary ?? string.Empty;
+    }
+
+    public AlertPayload(
+        Guid targetId,
+        string targetName,
+        string status,
+        DateTime startedAt,
+        DateTime? endedAt,
+        TimeSpan? duration,
+        string eventType,
+        string summary)
+    {
+        TargetId = targetId;
+        TargetName = targetName;
+        Status = status;
+        StartedAt = startedAt;
+        EndedAt = endedAt;
+        Duration = duration;
+        EventTypeName = eventType;
+        Summary = summary;
+        EventType = Enum.TryParse<AlertEventType>(eventType, true, out var parsed)
+            ? parsed
+            : AlertEventType.Down;
+        EventAt = startedAt;
+        ErrorSummary = summary;
+        ResponseTimeMs = null;
+        CurrentOutage = null;
     }
 
     public AlertEventType EventType { get; }
@@ -69,6 +107,14 @@ public sealed class AlertPayload
     public string? ErrorSummary { get; }
     public int? ResponseTimeMs { get; }
     public OutageSnapshot? CurrentOutage { get; }
+    public Guid TargetId { get; }
+    public string TargetName { get; }
+    public string Status { get; }
+    public DateTime StartedAt { get; }
+    public DateTime? EndedAt { get; }
+    public TimeSpan? Duration { get; }
+    public string EventTypeName { get; }
+    public string Summary { get; }
 }
 
 public sealed class OutageSnapshot

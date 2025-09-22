@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Monitoring.Endpoints;
 using Monitoring.Targets;
+using Monitoring.Shared;
 
 namespace Monitoring.Execution.Providers;
 

@@ -122,21 +122,23 @@ internal readonly struct AlertEvaluationInput
     public DateTime? PreviousLastUpAt { get; }
 }
 
-internal readonly struct AlertEvaluationResult
+public sealed record AlertEvaluationResult
 {
-    private AlertEvaluationResult(AlertEventType? eventType, OutageWindow? outage, bool shouldRecordAlert)
+    private AlertEvaluationResult(bool shouldAlert, AlertEventType? eventType, OutageWindow? currentOutage, bool shouldRecordAlert)
     {
+        ShouldAlert = shouldAlert;
         EventType = eventType;
-        Outage = outage;
+        CurrentOutage = currentOutage;
         ShouldRecordAlert = shouldRecordAlert;
     }
 
+    public bool ShouldAlert { get; }
     public AlertEventType? EventType { get; }
-    public OutageWindow? Outage { get; }
+    public OutageWindow? CurrentOutage { get; }
     public bool ShouldRecordAlert { get; }
 
-    public static AlertEvaluationResult None { get; } = new(null, null, false);
+    public static AlertEvaluationResult None { get; } = new(false, null, null, false);
 
     public static AlertEvaluationResult From(AlertEventType eventType, OutageWindow? outage, bool shouldRecordAlert)
-        => new(eventType, outage, shouldRecordAlert);
+        => new(true, eventType, outage, shouldRecordAlert);
 }

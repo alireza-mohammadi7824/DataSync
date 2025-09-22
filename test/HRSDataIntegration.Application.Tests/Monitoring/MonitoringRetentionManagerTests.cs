@@ -337,7 +337,12 @@ public class MonitoringRetentionManagerTests
 
         public IAsyncQueryableExecuter AsyncExecuter { get; }
 
+        public bool IsChangeTrackingEnabled => false;
+
         public Task<IQueryable<TEntity>> GetQueryableAsync(bool includeDetails = true, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.AsQueryable());
+
+        public Task<IQueryable<TEntity>> GetQueryableAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(_items.AsQueryable());
 
         public Task<IQueryable<TEntity>> WithDetailsAsync(CancellationToken cancellationToken = default)
@@ -350,6 +355,9 @@ public class MonitoringRetentionManagerTests
             => _items.AsQueryable();
 
         public IQueryable<TEntity> WithDetails()
+            => _items.AsQueryable();
+
+        public IQueryable<TEntity> WithDetails(params Expression<Func<TEntity, object>>[] propertySelectors)
             => _items.AsQueryable();
 
         public Task<TEntity> GetAsync(Guid id, bool includeDetails = true, CancellationToken cancellationToken = default)
@@ -435,6 +443,13 @@ public class MonitoringRetentionManagerTests
         }
 
         public Task DeleteAsync(Expression<Func<TEntity, bool>> predicate, bool autoSave = false, CancellationToken cancellationToken = default)
+        {
+            var compiled = predicate.Compile();
+            _items.RemoveAll(x => compiled(x));
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteDirectAsync(Expression<Func<TEntity, bool>> predicate, CancellationToken cancellationToken = default)
         {
             var compiled = predicate.Compile();
             _items.RemoveAll(x => compiled(x));

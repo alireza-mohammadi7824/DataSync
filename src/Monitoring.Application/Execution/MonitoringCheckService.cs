@@ -146,6 +146,13 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
             return dispatches;
         }
 
+        var configuration = new AlertChannelConfiguration(channels);
+        var channelDescriptors = _channelResolver.ResolveChannels(configuration);
+        if (channelDescriptors.Count == 0)
+        {
+            return dispatches;
+        }
+
         var underMaintenance = suppressDuringMaintenance && await HasActiveMaintenanceAsync(target.Id, timestamp, cancellationToken);
 
         var evaluation = AlertEvaluator.Evaluate(new AlertEvaluationInput(
@@ -167,17 +174,27 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
             return dispatches;
         }
 
-        var payload = new AlertPayload(
-            evaluation.EventType,
-            timestamp,
+        var snapshot = new TargetSnapshot(
+            target.Id,
             target.Name,
-            target.Type.ToString(),
+            target.Type,
             target.Endpoint,
+            target.CurrentStatus,
+            target.LastCheckedAt,
+            target.LastStatusChangeAt,
+            target.FirstDownAt,
+            target.LastUpAt,
+            target.Category);
+
+        var eventType = evaluation.EventType ?? AlertEventType.Down;
+        var payload = new AlertPayload(
+            eventType,
+            timestamp,
             result.ErrorSummary,
             result.ResponseTimeMs,
             evaluation.CurrentOutage);
 
-        dispatches.AddRange(AlertDispatch.Create(target.Id, payload, channels));
+        dispatches.AddRange(AlertDispatch.Create(snapshot, payload, channelDescriptors));
         return dispatches;
     }
 
@@ -187,11 +204,10 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
         {
             try
             {
-                var channel = _channelResolver.Resolve(dispatch.Channel);
-                await channel.SendAsync(dispatch.TargetSnapshot, dispatch.Payload, cancellationToken);
+                await dispatch.NotificationChannel.SendAsync(dispatch.TargetSnapshot, dispatch.Payload, cancellationToken);
                 _logger.LogInformation(
                     "Alert sent for target {TargetId} via {Channel} for event {EventType}",
-                    dispatch.TargetSnapshot.Id,
+                    dispatch.TargetSnapshot.TargetId,
                     dispatch.Channel,
                     dispatch.Payload.EventType);
             }
@@ -199,7 +215,7 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
             {
                 _logger.LogWarning(ex,
                     "Failed to send alert for target {TargetId} via {Channel}",
-                    dispatch.TargetSnapshot.Id,
+                    dispatch.TargetSnapshot.TargetId,
                     dispatch.Channel);
             }
         }
