@@ -1,15 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Monitoring.Execution;
 using Monitoring.Endpoints;
-using Monitoring.Options;
 using Monitoring.Permissions;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
@@ -32,20 +29,11 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         PropertyNameCaseInsensitive = true
     };
 
-    private static readonly JsonSerializerOptions AlertChannelsSerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DictionaryKeyPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
-    };
-
     private readonly IRepository<MonitoringTarget, Guid> _repository;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
-    private readonly IRepository<AlertPolicy, Guid> _alertPolicyRepository;
     private readonly IRepository<MaintenanceWindow, Guid> _maintenanceRepository;
     private readonly IGuidGenerator _guidGenerator;
-    private readonly MonitoringOptions _options;
     private readonly IMonitoringCheckService _checkService;
     private readonly IBulkCheckQueue _bulkCheckQueue;
     private readonly ExecutionMetrics _metrics;
@@ -55,10 +43,8 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         IRepository<MonitoringTarget, Guid> repository,
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
-        IRepository<AlertPolicy, Guid> alertPolicyRepository,
         IRepository<MaintenanceWindow, Guid> maintenanceRepository,
         IGuidGenerator guidGenerator,
-        IOptions<MonitoringOptions> options,
         IMonitoringCheckService checkService,
         IBulkCheckQueue bulkCheckQueue,
         ExecutionMetrics metrics,
@@ -67,10 +53,8 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         _repository = repository;
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
-        _alertPolicyRepository = alertPolicyRepository;
         _maintenanceRepository = maintenanceRepository;
         _guidGenerator = guidGenerator;
-        _options = options.Value;
         _checkService = checkService;
         _bulkCheckQueue = bulkCheckQueue;
         _metrics = metrics;
@@ -374,90 +358,6 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         return ObjectMapper.Map<List<ServiceStatusHistory>, List<ServiceStatusHistoryDto>>(history);
     }
 
-    public async Task<AlertPolicyDto> GetAlertPolicyAsync(Guid targetId)
-    {
-        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
-
-        await EnsureTargetExistsAsync(targetId);
-
-        var policy = await _alertPolicyRepository.FirstOrDefaultAsync(x => x.TargetId == targetId);
-        if (policy == null)
-        {
-            var defaults = _options.AlertDefaults;
-            return new AlertPolicyDto
-            {
-                TargetId = targetId,
-                Enabled = defaults.Enabled,
-                NotifyAfterFailures = defaults.NotifyAfterFailures,
-                RepeatMinutes = defaults.RepeatMinutes,
-                RecoverQuietMinutes = defaults.RecoverQuietMinutes,
-                ChannelsJson = SerializeDefaultChannels(defaults.DefaultChannels),
-                SuppressDuringMaintenance = defaults.SuppressDuringMaintenance,
-                IsInherited = true
-            };
-        }
-
-        var dto = ObjectMapper.Map<AlertPolicy, AlertPolicyDto>(policy);
-        dto.IsInherited = false;
-        return dto;
-    }
-
-    public async Task<AlertPolicyDto> UpsertAlertPolicyAsync(Guid targetId, AlertPolicyDto input)
-    {
-        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Edit);
-
-        if (input == null)
-        {
-            throw new ArgumentNullException(nameof(input));
-        }
-
-        await EnsureTargetExistsAsync(targetId);
-
-        if (input.TargetId != Guid.Empty && input.TargetId != targetId)
-        {
-            throw new UserFriendlyException("TargetId mismatch.");
-        }
-
-        input.TargetId = targetId;
-
-        ValidateAlertPolicyInput(input);
-
-        var normalizedChannels = NormalizeChannelsJson(input.ChannelsJson);
-
-        var existing = await _alertPolicyRepository.FirstOrDefaultAsync(x => x.TargetId == targetId);
-        if (existing == null)
-        {
-            existing = new AlertPolicy(
-                _guidGenerator.Create(),
-                targetId,
-                input.Enabled,
-                input.NotifyAfterFailures,
-                input.RepeatMinutes,
-                input.RecoverQuietMinutes,
-                normalizedChannels,
-                input.SuppressDuringMaintenance);
-
-            await _alertPolicyRepository.InsertAsync(existing, autoSave: true);
-        }
-        else
-        {
-            existing.Update(
-                input.Enabled,
-                input.NotifyAfterFailures,
-                input.RepeatMinutes,
-                input.RecoverQuietMinutes,
-                normalizedChannels,
-                input.SuppressDuringMaintenance);
-
-            await _alertPolicyRepository.UpdateAsync(existing, autoSave: true);
-        }
-
-        var dto = ObjectMapper.Map<AlertPolicy, AlertPolicyDto>(existing);
-        dto.TargetId = targetId;
-        dto.IsInherited = false;
-        return dto;
-    }
-
     public async Task<List<MaintenanceWindowDto>> GetMaintenanceAsync(Guid? targetId = null)
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
@@ -602,41 +502,6 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         ValidateEndpointAndSettings(input);
     }
 
-    private void ValidateAlertPolicyInput(AlertPolicyDto input)
-    {
-        if (input.NotifyAfterFailures < 1)
-        {
-            throw new UserFriendlyException("NotifyAfterFailures must be at least 1.");
-        }
-
-        if (input.RepeatMinutes < 1)
-        {
-            throw new UserFriendlyException("RepeatMinutes must be at least 1.");
-        }
-
-        if (input.RecoverQuietMinutes < 0)
-        {
-            throw new UserFriendlyException("RecoverQuietMinutes cannot be negative.");
-        }
-
-        if (!input.ChannelsJson.IsNullOrWhiteSpace())
-        {
-            if (input.ChannelsJson!.Length > AlertPolicyConsts.ChannelsJsonMaxLength)
-            {
-                throw new UserFriendlyException($"ChannelsJson cannot exceed {AlertPolicyConsts.ChannelsJsonMaxLength} characters.");
-            }
-
-            try
-            {
-                JsonDocument.Parse(input.ChannelsJson);
-            }
-            catch (JsonException)
-            {
-                throw new UserFriendlyException("ChannelsJson must be valid JSON.");
-            }
-        }
-    }
-
     private void ValidateMaintenanceWindow(CreateUpdateMaintenanceWindowDto input)
     {
         if (input.StartUtc == default)
@@ -663,41 +528,6 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         {
             throw new UserFriendlyException($"Reason cannot exceed {MaintenanceWindowConsts.ReasonMaxLength} characters.");
         }
-    }
-
-    private string? NormalizeChannelsJson(string? channelsJson)
-    {
-        if (channelsJson.IsNullOrWhiteSpace())
-        {
-            return null;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(channelsJson);
-            var normalized = JsonSerializer.Serialize(document.RootElement, AlertChannelsSerializerOptions);
-
-            if (normalized.Length > AlertPolicyConsts.ChannelsJsonMaxLength)
-            {
-                throw new UserFriendlyException($"ChannelsJson cannot exceed {AlertPolicyConsts.ChannelsJsonMaxLength} characters.");
-            }
-
-            return normalized;
-        }
-        catch (JsonException)
-        {
-            throw new UserFriendlyException("ChannelsJson must be valid JSON.");
-        }
-    }
-
-    private string? SerializeDefaultChannels(Dictionary<string, string[]>? channels)
-    {
-        if (channels == null || channels.Count == 0)
-        {
-            return null;
-        }
-
-        return JsonSerializer.Serialize(channels, AlertChannelsSerializerOptions);
     }
 
     private async Task<MonitoringTarget> EnsureTargetExistsAsync(Guid targetId)

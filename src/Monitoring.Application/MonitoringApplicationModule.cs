@@ -32,7 +32,12 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddTransient<IHealthCheckProvider, TcpCheckProvider>();
         context.Services.AddTransient<IHealthCheckProvider, RedisCheckProvider>();
         context.Services.AddSingleton<HealthCheckProviderResolver>();
-        context.Services.AddTransient<INotificationChannelResolver, NotificationChannelResolver>();
+        context.Services.AddTransient<INotificationChannel, EmailNotificationChannel>();
+        context.Services.AddTransient<INotificationChannel, WebhookNotificationChannel>();
+        context.Services.AddSingleton<INotificationChannelResolver, NotificationChannelResolver>();
+        context.Services.AddSingleton<AlertThrottleStore>();
+        context.Services.AddTransient<AlertEvaluator>();
+        context.Services.AddTransient<AlertDispatcher>();
         context.Services.TryAddSingleton<ExecutionMetrics>();
         context.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
         context.Services.AddTransient<HealthCheckExecutor>();

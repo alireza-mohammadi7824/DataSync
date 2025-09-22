@@ -15,6 +15,7 @@ using Volo.Abp.OpenIddict.EntityFrameworkCore;
 using Volo.Abp.TenantManagement;
 using Volo.Abp.TenantManagement.EntityFrameworkCore;
 using Monitoring;
+using Monitoring.Alerts;
 using Monitoring.Targets;
 using HRSDataIntegration.DTOs.Chart;
 using HRSDataIntegration.DTOs.Personeli;
@@ -242,11 +243,16 @@ public class HRSDataIntegrationDbContext :
         {
             b.ToTable(MonitoringConsts.DbTablePrefix + "AlertPolicies", MonitoringConsts.DbSchema);
             b.ConfigureByConvention();
-            b.Property(x => x.ChannelsJson).HasMaxLength(AlertPolicyConsts.ChannelsJsonMaxLength);
-            b.HasIndex(x => x.TargetId).IsUnique();
+            b.Property(x => x.Emails).HasMaxLength(1024);
+            b.Property(x => x.WebhookUrl).HasMaxLength(1024);
+            b.Property(x => x.OnDown).IsRequired();
+            b.Property(x => x.OnUp).IsRequired();
+            b.Property(x => x.MinDownDurationSeconds).IsRequired();
+            b.Property(x => x.CooldownSeconds).IsRequired();
+            b.HasIndex(x => x.TargetId);
             b.HasOne<MonitoringTarget>()
-                .WithOne()
-                .HasForeignKey<AlertPolicy>(x => x.TargetId)
+                .WithMany()
+                .HasForeignKey(x => x.TargetId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

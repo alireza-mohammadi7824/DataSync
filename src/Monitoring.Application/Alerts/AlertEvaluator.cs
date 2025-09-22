@@ -1,154 +1,140 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Monitoring.Targets;
+using Volo.Abp.Domain.Repositories;
 
 namespace Monitoring.Alerts;
 
-internal static class AlertEvaluator
+public sealed class AlertEvaluator
 {
-    public static AlertEvaluationResult Evaluate(AlertEvaluationInput input)
+    private readonly IRepository<AlertPolicy, Guid> _policyRepository;
+
+    public AlertEvaluator(
+        IRepository<AlertPolicy, Guid> policyRepository)
     {
-        if (!input.Enabled)
-        {
-            return AlertEvaluationResult.None;
-        }
-
-        if (input.UnderMaintenance)
-        {
-            return AlertEvaluationResult.None;
-        }
-
-        if (input.CurrentStatus == ServiceStatus.Offline)
-        {
-            if (input.PreviousStatus != ServiceStatus.Offline)
-            {
-                if (input.ConsecutiveFailures >= input.NotifyAfterFailures)
-                {
-                    return AlertEvaluationResult.From(AlertEventType.Down, input.ActiveOutage, shouldRecordAlert: true);
-                }
-
-                return AlertEvaluationResult.None;
-            }
-
-            if (input.ActiveOutage == null)
-            {
-                return AlertEvaluationResult.None;
-            }
-
-            if (!input.ActiveOutage.LastAlertAt.HasValue)
-            {
-                // This covers the case when retries delayed the first alert.
-                if (input.ConsecutiveFailures >= input.NotifyAfterFailures)
-                {
-                    return AlertEvaluationResult.From(AlertEventType.Down, input.ActiveOutage, shouldRecordAlert: true);
-                }
-
-                return AlertEvaluationResult.None;
-            }
-
-            var nextAllowed = input.ActiveOutage.LastAlertAt.Value.AddMinutes(input.RepeatMinutes);
-            if (input.Timestamp >= nextAllowed)
-            {
-                return AlertEvaluationResult.From(AlertEventType.StillDown, input.ActiveOutage, shouldRecordAlert: true);
-            }
-
-            return AlertEvaluationResult.None;
-        }
-
-        if (input.PreviousStatus == ServiceStatus.Offline && input.CurrentStatus == ServiceStatus.Online)
-        {
-            if (input.RecoverQuietMinutes <= 0)
-            {
-                return AlertEvaluationResult.From(AlertEventType.Recovered, input.ClosedOutage, shouldRecordAlert: false);
-            }
-
-            var lastUp = input.PreviousLastUpAt;
-            if (!lastUp.HasValue)
-            {
-                return AlertEvaluationResult.From(AlertEventType.Recovered, input.ClosedOutage, shouldRecordAlert: false);
-            }
-
-            var quietThreshold = lastUp.Value.AddMinutes(input.RecoverQuietMinutes);
-            if (input.Timestamp >= quietThreshold)
-            {
-                return AlertEvaluationResult.From(AlertEventType.Recovered, input.ClosedOutage, shouldRecordAlert: false);
-            }
-        }
-
-        return AlertEvaluationResult.None;
-    }
-}
-
-internal readonly struct AlertEvaluationInput
-{
-    public AlertEvaluationInput(
-        ServiceStatus previousStatus,
-        ServiceStatus currentStatus,
-        int consecutiveFailures,
-        DateTime timestamp,
-        int notifyAfterFailures,
-        int repeatMinutes,
-        int recoverQuietMinutes,
-        bool enabled,
-        bool underMaintenance,
-        OutageWindow? activeOutage,
-        OutageWindow? closedOutage,
-        DateTime? previousLastUpAt)
-    {
-        PreviousStatus = previousStatus;
-        CurrentStatus = currentStatus;
-        ConsecutiveFailures = consecutiveFailures;
-        Timestamp = timestamp;
-        NotifyAfterFailures = notifyAfterFailures;
-        RepeatMinutes = repeatMinutes;
-        RecoverQuietMinutes = recoverQuietMinutes;
-        Enabled = enabled;
-        UnderMaintenance = underMaintenance;
-        ActiveOutage = activeOutage;
-        ClosedOutage = closedOutage;
-        PreviousLastUpAt = previousLastUpAt;
+        _policyRepository = policyRepository;
     }
 
-    public ServiceStatus PreviousStatus { get; }
-    public ServiceStatus CurrentStatus { get; }
-    public int ConsecutiveFailures { get; }
-    public DateTime Timestamp { get; }
-    public int NotifyAfterFailures { get; }
-    public int RepeatMinutes { get; }
-    public int RecoverQuietMinutes { get; }
-    public bool Enabled { get; }
-    public bool UnderMaintenance { get; }
-    public OutageWindow? ActiveOutage { get; }
-    public OutageWindow? ClosedOutage { get; }
-    public DateTime? PreviousLastUpAt { get; }
-}
-
-public sealed record AlertEvaluationResult(bool ShouldAlert, OutageSnapshot? CurrentOutage)
-{
-    public AlertEventType? EventType { get; init; }
-
-    public bool ShouldRecordAlert { get; init; }
-
-    public static AlertEvaluationResult None { get; } = new(false, null);
-
-    public static AlertEvaluationResult From(AlertEventType eventType, OutageWindow? outage, bool shouldRecordAlert)
-        => new(true, ToSnapshot(outage))
+    public async Task<AlertEvaluationResult> EvaluateTransitionAsync(
+        MonitoringTarget target,
+        ServiceStatusHistory latestHistory,
+        OutageWindow? outage,
+        DateTime nowUtc,
+        CancellationToken ct = default)
+    {
+        var eventType = DetermineEventType(latestHistory);
+        if (eventType == null)
         {
-            EventType = eventType,
-            ShouldRecordAlert = shouldRecordAlert
+            return new AlertEvaluationResult(false, outage);
+        }
+
+        var policies = await GetApplicablePoliciesAsync(target.Id, ct);
+        if (policies.Count == 0)
+        {
+            return new AlertEvaluationResult(false, outage)
+            {
+                EventType = eventType.Value.ToString(),
+                Summary = BuildSummary(target, latestHistory.ToStatus, eventType)
+            };
+        }
+
+        var filtered = FilterPolicies(policies, eventType.Value, outage, nowUtc);
+        if (filtered.Count == 0)
+        {
+            return new AlertEvaluationResult(false, outage)
+            {
+                EventType = eventType.Value.ToString(),
+                Summary = BuildSummary(target, latestHistory.ToStatus, eventType)
+            };
+        }
+
+        return new AlertEvaluationResult(true, outage)
+        {
+            EventType = eventType.Value.ToString(),
+            Policies = filtered,
+            Summary = BuildSummary(target, latestHistory.ToStatus, eventType)
         };
+    }
 
-    private static OutageSnapshot? ToSnapshot(OutageWindow? outage)
+    private async Task<IReadOnlyList<AlertPolicy>> GetApplicablePoliciesAsync(Guid targetId, CancellationToken ct)
     {
-        if (outage == null)
+        var targetSpecific = await _policyRepository.GetListAsync(p => p.TargetId == targetId, cancellationToken: ct);
+        if (targetSpecific.Count > 0)
         {
-            return null;
+            return targetSpecific;
         }
 
-        return new OutageSnapshot(
-            outage.Id,
-            outage.StartedAt,
-            outage.EndedAt,
-            outage.FailureCount,
-            outage.TotalDurationSec);
+        return await _policyRepository.GetListAsync(p => p.TargetId == null, cancellationToken: ct);
     }
+
+    private static List<AlertPolicy> FilterPolicies(
+        IReadOnlyList<AlertPolicy> policies,
+        AlertEventType eventType,
+        OutageWindow? outage,
+        DateTime nowUtc)
+    {
+        var filtered = new List<AlertPolicy>();
+
+        foreach (var policy in policies)
+        {
+            if (eventType == AlertEventType.Down && !policy.OnDown)
+            {
+                continue;
+            }
+
+            if (eventType == AlertEventType.Up && !policy.OnUp)
+            {
+                continue;
+            }
+
+            if (eventType == AlertEventType.Down && policy.MinDownDurationSeconds > 0)
+            {
+                if (outage == null)
+                {
+                    continue;
+                }
+
+                var duration = nowUtc - outage.StartedAt;
+                if (duration < TimeSpan.FromSeconds(policy.MinDownDurationSeconds))
+                {
+                    continue;
+                }
+            }
+
+            filtered.Add(policy);
+        }
+
+        return filtered;
+    }
+
+    private static AlertEventType? DetermineEventType(ServiceStatusHistory history)
+    {
+        if (history.FromStatus == ServiceStatus.Online && history.ToStatus == ServiceStatus.Offline)
+        {
+            return AlertEventType.Down;
+        }
+
+        if (history.FromStatus == ServiceStatus.Offline && history.ToStatus == ServiceStatus.Online)
+        {
+            return AlertEventType.Up;
+        }
+
+        return null;
+    }
+
+    private static string BuildSummary(MonitoringTarget target, ServiceStatus status, AlertEventType? eventType)
+    {
+        var statusText = status.ToString();
+        var eventText = eventType?.ToString() ?? statusText;
+        return $"{target.Name} {eventText}";
+    }
+}
+
+public enum AlertEventType
+{
+    Down,
+    Up
 }

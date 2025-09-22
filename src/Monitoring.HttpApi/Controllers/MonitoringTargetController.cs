@@ -57,22 +57,6 @@ public class MonitoringTargetController : MonitoringController
     }
 
     [HttpGet]
-    [Route("{id}/alert-policy")]
-    public virtual Task<AlertPolicyDto> GetAlertPolicyAsync(Guid id)
-    {
-        return _monitoringTargetAppService.GetAlertPolicyAsync(id);
-    }
-
-    [HttpPut]
-    [Route("{id}/alert-policy")]
-    [Authorize(MonitoringPermissions.Services.Edit)]
-    [EnableRateLimiting("monitoring-write")]
-    public virtual Task<AlertPolicyDto> UpsertAlertPolicyAsync(Guid id, AlertPolicyDto input)
-    {
-        return _monitoringTargetAppService.UpsertAlertPolicyAsync(id, input);
-    }
-
-    [HttpGet]
     [Route("{id}/history")]
     public virtual Task<List<ServiceStatusHistoryDto>> GetRecentStatusHistoryAsync(Guid id, [FromQuery] int count = 20)
     {
