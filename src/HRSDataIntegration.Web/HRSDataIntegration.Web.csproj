@@ -42,14 +42,14 @@
     <PackageReference Include="AspNetCore.HealthChecks.UI" Version="8.0.0" />
     <PackageReference Include="AspNetCore.HealthChecks.UI.Client" Version="8.0.0" />
     <PackageReference Include="MassTransit.RabbitMQ" Version="8.5.1" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.18">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.11" />
     <PackageReference Include="AspNetCore.HealthChecks.UI.InMemory.Storage" Version="8.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.18" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.18">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.11">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
@@ -62,6 +62,7 @@
     <ProjectReference Include="..\HRSDataIntegration.Application\HRSDataIntegration.Application.csproj" />
     <ProjectReference Include="..\HRSDataIntegration.HttpApi\HRSDataIntegration.HttpApi.csproj" />
     <ProjectReference Include="..\HRSDataIntegration.EntityFrameworkCore\HRSDataIntegration.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\Monitoring.Web\Monitoring.Web.csproj" />
   </ItemGroup>
 
   <ItemGroup>
