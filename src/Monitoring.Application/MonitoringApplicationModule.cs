@@ -35,6 +35,11 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddTransient<RedisCheckProvider>();
         context.Services.AddTransient<IHealthCheckProviderResolver, HealthCheckProviderResolver>();
         context.Services.AddTransient<INotificationChannelResolver, NotificationChannelResolver>();
+        context.Services.AddTransient<Monitoring.Alerts.Delivery.INotificationChannel, Monitoring.Alerts.Delivery.EmailNotificationChannel>();
+        context.Services.AddTransient<Monitoring.Alerts.Delivery.INotificationChannel, Monitoring.Alerts.Delivery.SmsNotificationChannel>();
+        context.Services.AddTransient<Monitoring.Alerts.Delivery.INotificationChannel, Monitoring.Alerts.Delivery.WebhookNotificationChannel>();
+        context.Services.AddSingleton<Monitoring.Alerts.Delivery.NotificationChannelResolver>();
+        context.Services.AddSingleton<AlertDispatcher>();
         context.Services.TryAddSingleton<ExecutionMetrics>();
         context.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
         context.Services.AddTransient<HealthCheckExecutor>();
