@@ -1,7 +1,5 @@
 using System;
-using System.Collections.Generic;
 using Monitoring.Dashboard;
-using Monitoring.Targets;
 using Xunit;
 
 namespace HRSDataIntegration.Monitoring;
@@ -9,45 +7,40 @@ namespace HRSDataIntegration.Monitoring;
 public class DashboardMetricsHelperTests
 {
     [Fact]
-    public void Calculates_overlap_for_partial_window()
+    public void OverlapUtc_handles_open_outage()
     {
-        var outage = new OutageWindow(Guid.NewGuid(), Guid.NewGuid(), new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc), 1);
-        outage.Close(new DateTime(2024, 6, 1, 2, 0, 0, DateTimeKind.Utc));
+        var now = new DateTime(2024, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        var start = now.AddHours(-3);
+        var windowStart = now.AddHours(-2);
+        var windowEnd = now;
 
-        var overlap = DashboardMetricsHelper.CalculateOverlapSeconds(
-            outage,
-            new DateTime(2024, 6, 1, 1, 0, 0, DateTimeKind.Utc),
-            new DateTime(2024, 6, 1, 3, 0, 0, DateTimeKind.Utc));
+        var overlap = DashboardMetricsHelper.OverlapUtc(start, null, windowStart, windowEnd, now);
 
-        Assert.Equal(3600, overlap);
+        Assert.Equal(TimeSpan.FromHours(2), overlap);
     }
 
     [Fact]
-    public void Calculates_mttr_in_seconds()
+    public void OverlapUtc_returns_zero_when_outside_window()
     {
-        var outage = new OutageWindow(Guid.NewGuid(), Guid.NewGuid(), new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc), 1);
-        outage.Close(new DateTime(2024, 6, 1, 0, 45, 0, DateTimeKind.Utc));
+        var now = new DateTime(2024, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        var start = now.AddHours(-5);
+        var end = now.AddHours(-4);
+        var windowStart = now.AddHours(-3);
+        var windowEnd = now;
 
-        var mttr = DashboardMetricsHelper.CalculateMttrSeconds(
-            new List<OutageWindow> { outage },
-            new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc),
-            new DateTime(2024, 6, 2, 0, 0, 0, DateTimeKind.Utc));
+        var overlap = DashboardMetricsHelper.OverlapUtc(start, end, windowStart, windowEnd, now);
 
-        Assert.Equal(2700, mttr);
+        Assert.Equal(TimeSpan.Zero, overlap);
     }
 
     [Fact]
-    public void Calculates_mtbf_gaps_between_outages()
+    public void UptimePercent_calculates_remaining_percentage()
     {
-        var targetId = Guid.NewGuid();
-        var first = new OutageWindow(Guid.NewGuid(), targetId, new DateTime(2024, 6, 1, 0, 0, 0, DateTimeKind.Utc), 1);
-        first.Close(new DateTime(2024, 6, 1, 0, 10, 0, DateTimeKind.Utc));
-        var second = new OutageWindow(Guid.NewGuid(), targetId, new DateTime(2024, 6, 1, 1, 0, 0, DateTimeKind.Utc), 1);
-        second.Close(new DateTime(2024, 6, 1, 1, 10, 0, DateTimeKind.Utc));
+        var window = TimeSpan.FromHours(24);
+        var downtime = TimeSpan.FromHours(6);
 
-        var gaps = DashboardMetricsHelper.CalculateMtbfSeconds(new List<OutageWindow> { second, first });
+        var uptime = DashboardMetricsHelper.UptimePercent(window, downtime);
 
-        Assert.Single(gaps);
-        Assert.Equal(3000, gaps[0]);
+        Assert.Equal(75d, uptime);
     }
 }

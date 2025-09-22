@@ -17,6 +17,9 @@ public class MonitoringPermissionDefinitionProvider : PermissionDefinitionProvid
         services.AddChild(MonitoringPermissions.Services.Edit, L("Permission:Monitoring.Services.Edit"));
         services.AddChild(MonitoringPermissions.Services.Delete, L("Permission:Monitoring.Services.Delete"));
         services.AddChild(MonitoringPermissions.Services.Run, L("Permission:Monitoring.Services.Run"));
+
+        var dashboard = monitoringGroup.AddPermission(MonitoringPermissions.Dashboard.Default, L("Permission:Monitoring.Dashboard"));
+        dashboard.AddChild(MonitoringPermissions.Dashboard.View, L("Permission:Monitoring.Dashboard.View"));
     }
 
     private static LocalizableString L(string name)
