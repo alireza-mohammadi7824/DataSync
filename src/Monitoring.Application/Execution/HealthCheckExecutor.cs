@@ -56,7 +56,7 @@ public sealed class HealthCheckExecutor
             _logger.LogInformation(
                 "Skipping check for target {TargetId} because the run lock is held by another node",
                 target.Id);
-            return HealthCheckExecutionResult.Skipped("Lock", triggerSource, _clock.Now);
+            return HealthCheckExecutionResult.CreateSkipped("Lock", triggerSource, _clock.Now);
         }
 
         var now = _clock.Now;
@@ -68,7 +68,7 @@ public sealed class HealthCheckExecutor
             _logger.LogInformation(
                 "Skipping check for target {TargetId} because a recent check is still in progress",
                 target.Id);
-            return HealthCheckExecutionResult.Skipped("InProgress", triggerSource, now);
+            return HealthCheckExecutionResult.CreateSkipped("InProgress", triggerSource, now);
         }
 
         _metrics.IncrementChecksStarted();
@@ -203,7 +203,7 @@ public sealed record HealthCheckExecutionResult
 
     public int Attempts { get; }
 
-    public static HealthCheckExecutionResult Skipped(string reason, string triggerSource, DateTime timestamp)
+    public static HealthCheckExecutionResult CreateSkipped(string reason, string triggerSource, DateTime timestamp)
     {
         return new HealthCheckExecutionResult(true, reason, new HealthCheckResult(false, null, reason, triggerSource), timestamp, 0);
     }

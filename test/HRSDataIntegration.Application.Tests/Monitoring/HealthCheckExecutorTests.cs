@@ -95,6 +95,20 @@ public class HealthCheckExecutorTests
         }
 
         public DateTime Now { get; set; }
+
+        public bool SupportsMultipleTimezone => false;
+
+        public DateTimeKind Kind { get; init; } = DateTimeKind.Utc;
+
+        public DateTime Normalize(DateTime dateTime)
+        {
+            return DateTime.SpecifyKind(dateTime, Kind);
+        }
+
+        public DateTime? NormalizeNullable(DateTime? dateTime)
+        {
+            return dateTime.HasValue ? Normalize(dateTime.Value) : null;
+        }
     }
 
     private sealed class SequenceProvider : IHealthCheckProvider

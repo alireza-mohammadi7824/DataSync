@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
+using Volo.Abp.Http.Modeling;
 using Monitoring.Permissions;
 
 namespace Monitoring.Targets;
