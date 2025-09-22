@@ -18,6 +18,7 @@ using Volo.Abp.Authorization;
 using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Guids;
+using Volo.Abp.Threading;
 
 namespace Monitoring.Targets;
 
@@ -48,6 +49,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
     private readonly IMonitoringCheckService _checkService;
     private readonly IBulkCheckQueue _bulkCheckQueue;
     private readonly ExecutionMetrics _metrics;
+    private readonly ICancellationTokenProvider _cancellationTokenProvider;
 
     public MonitoringTargetAppService(
         IRepository<MonitoringTarget, Guid> repository,
@@ -59,7 +61,8 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         IOptions<MonitoringOptions> options,
         IMonitoringCheckService checkService,
         IBulkCheckQueue bulkCheckQueue,
-        ExecutionMetrics metrics)
+        ExecutionMetrics metrics,
+        ICancellationTokenProvider cancellationTokenProvider)
     {
         _repository = repository;
         _historyRepository = historyRepository;
@@ -71,6 +74,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         _checkService = checkService;
         _bulkCheckQueue = bulkCheckQueue;
         _metrics = metrics;
+        _cancellationTokenProvider = cancellationTokenProvider;
     }
 
     public async Task<PagedResultDto<MonitoringTargetDto>> GetListAsync(
@@ -218,7 +222,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
         var target = await _repository.GetAsync(id);
-        var execution = await _checkService.RunAsync(target, "manual-trigger", true, CancellationTokenProvider.Token);
+        var execution = await _checkService.RunAsync(target, "manual-trigger", true, _cancellationTokenProvider.Token);
 
         if (execution.IsSkipped)
         {
@@ -231,7 +235,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
         var target = await _repository.GetAsync(id);
-        var execution = await _checkService.RunAsync(target, "manual", true, CancellationTokenProvider.Token);
+        var execution = await _checkService.RunAsync(target, "manual", true, _cancellationTokenProvider.Token);
 
         if (execution.IsSkipped)
         {
@@ -250,7 +254,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
             queryable
                 .Where(target => target.IsActive)
                 .Select(target => target.Id),
-            CancellationTokenProvider.Token);
+            _cancellationTokenProvider.Token);
 
         var batchId = _bulkCheckQueue.Enqueue(ids);
 

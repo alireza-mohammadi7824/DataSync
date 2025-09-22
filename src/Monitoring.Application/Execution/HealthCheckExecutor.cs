@@ -110,8 +110,9 @@ public sealed class HealthCheckExecutor
 
             var provider = _providerResolver.Get(parsedEndpoint.Type);
             var providerType = provider.Type;
-            var configuredRetries = SettingsReader.Get<int>(target.SettingsJson, "maxRetryAttempts", 0) ?? 0;
-            var maxAttempts = Math.Max(0, configuredRetries) + 1;
+            var configuredRetries = SettingsReader.Get<int>(target.SettingsJson, "maxRetryAttempts", 0);
+            var retryAttempts = configuredRetries ?? 0;
+            var maxAttempts = Math.Max(0, retryAttempts) + 1;
             HealthCheckResult? lastResult = null;
 
             for (var attempt = 0; attempt < maxAttempts; attempt++)

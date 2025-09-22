@@ -122,7 +122,7 @@ internal readonly struct AlertEvaluationInput
     public DateTime? PreviousLastUpAt { get; }
 }
 
-public sealed record AlertEvaluationResult(bool ShouldAlert, OutageWindow? CurrentOutage)
+public sealed record AlertEvaluationResult(bool ShouldAlert, OutageSnapshot? CurrentOutage)
 {
     public AlertEventType? EventType { get; init; }
 
@@ -131,9 +131,24 @@ public sealed record AlertEvaluationResult(bool ShouldAlert, OutageWindow? Curre
     public static AlertEvaluationResult None { get; } = new(false, null);
 
     public static AlertEvaluationResult From(AlertEventType eventType, OutageWindow? outage, bool shouldRecordAlert)
-        => new(true, outage)
+        => new(true, ToSnapshot(outage))
         {
             EventType = eventType,
             ShouldRecordAlert = shouldRecordAlert
         };
+
+    private static OutageSnapshot? ToSnapshot(OutageWindow? outage)
+    {
+        if (outage == null)
+        {
+            return null;
+        }
+
+        return new OutageSnapshot(
+            outage.Id,
+            outage.StartedAt,
+            outage.EndedAt,
+            outage.FailureCount,
+            outage.TotalDurationSec);
+    }
 }

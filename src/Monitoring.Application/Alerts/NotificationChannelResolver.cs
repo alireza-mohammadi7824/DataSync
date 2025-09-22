@@ -93,9 +93,9 @@ public sealed class NotificationChannelResolver : INotificationChannelResolver
 
         return normalized switch
         {
-            "email" => CreateEmailChannel(entries),
-            "webhook" => CreateWebhookChannel(entries),
-            "telegram" => CreateTelegramChannel(entries),
+            "email" => CreateEmailChannel(entries).Channel,
+            "webhook" => CreateWebhookChannel(entries).Channel,
+            "telegram" => CreateTelegramChannel(entries).Channel,
             _ => throw new InvalidOperationException($"Notification channel '{channel}' is not registered.")
         };
     }

@@ -31,10 +31,12 @@ public sealed class RedisCheckProvider : IHealthCheckProvider
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(timeout);
 
-        var database = SettingsReader.Get<int?>(target.SettingsJson, "db", endpoint.Database ?? 0) ?? endpoint.Database ?? 0;
+        var configuredDatabase = SettingsReader.Get<int>(target.SettingsJson, "db", endpoint.Database ?? 0);
+        var database = configuredDatabase ?? endpoint.Database ?? 0;
         var username = SettingsReader.Get<string>(target.SettingsJson, "username") ?? endpoint.User;
         var password = SettingsReader.Get<string>(target.SettingsJson, "password");
-        var tls = SettingsReader.Get<bool?>(target.SettingsJson, "tls", endpoint.Tls) ?? endpoint.Tls ?? false;
+        var configuredTls = SettingsReader.Get<bool>(target.SettingsJson, "tls", endpoint.Tls ?? false);
+        var tls = configuredTls ?? endpoint.Tls ?? false;
 
         var stopwatch = Stopwatch.StartNew();
         try
@@ -142,14 +144,15 @@ public sealed class RedisCheckProvider : IHealthCheckProvider
             {
                 sentinel = await ConnectionMultiplexer.ConnectAsync(sentinelOptions).WaitAsync(ct);
                 var server = sentinel.GetServer(node.host, node.port);
-                var master = await server.SentinelGetMasterAddressByNameAsync(endpoint.SentinelMasterName!).WaitAsync(ct);
-                if (master is { Length: 2 })
+                var masterEndPoint = await server
+                    .SentinelGetMasterAddressByNameAsync(endpoint.SentinelMasterName!)
+                    .WaitAsync(ct);
+
+                if (masterEndPoint != null)
                 {
-                    var masterHost = master[0].ToString();
-                    var masterPortText = master[1].ToString();
-                    if (!int.TryParse(masterPortText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var masterPort))
+                    if (!TryUnpackEndPoint(masterEndPoint, out var masterHost, out var masterPort))
                     {
-                        masterPort = 6379;
+                        continue;
                     }
 
                     sentinel.Dispose();
@@ -169,6 +172,37 @@ public sealed class RedisCheckProvider : IHealthCheckProvider
         }
 
         throw new InvalidOperationException("Unable to resolve Redis master from sentinel.");
+    }
+
+    private static bool TryUnpackEndPoint(System.Net.EndPoint endPoint, out string host, out int port)
+    {
+        switch (endPoint)
+        {
+            case System.Net.IPEndPoint ip:
+                host = ip.Address.ToString();
+                port = ip.Port;
+                return true;
+            case System.Net.DnsEndPoint dns:
+                host = dns.Host;
+                port = dns.Port;
+                return true;
+            default:
+                var text = endPoint.ToString();
+                if (!string.IsNullOrEmpty(text))
+                {
+                    var parts = text.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length == 2 && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedPort))
+                    {
+                        host = parts[0];
+                        port = parsedPort;
+                        return true;
+                    }
+                }
+
+                host = string.Empty;
+                port = 0;
+                return false;
+        }
     }
 
     private static ConfigurationOptions CreateOptions(
