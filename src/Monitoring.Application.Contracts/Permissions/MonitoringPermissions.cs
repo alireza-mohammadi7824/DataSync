@@ -19,4 +19,10 @@ public static class MonitoringPermissions
         public const string Default = GroupName + ".Dashboard";
         public const string View = Default + ".View";
     }
+
+    public static class History
+    {
+        public const string Default = GroupName + ".History";
+        public const string View = Default + ".View";
+    }
 }

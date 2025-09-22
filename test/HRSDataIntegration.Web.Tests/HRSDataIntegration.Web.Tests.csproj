@@ -17,7 +17,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="HtmlAgilityPack" Version="1.11.54" />
     <PackageReference Include="Volo.Abp.AspNetCore.TestBase" Version="8.3.1" />
-    <PackageReference Include="System.Text.Json" Version="8.0.4" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <ProjectReference Include="..\HRSDataIntegration.Application.Tests\HRSDataIntegration.Application.Tests.csproj" />
     <ProjectReference Include="..\..\src\HRSDataIntegration.Web\HRSDataIntegration.Web.csproj" />
     <ProjectReference Include="..\..\src\Monitoring.Web\Monitoring.Web.csproj" />

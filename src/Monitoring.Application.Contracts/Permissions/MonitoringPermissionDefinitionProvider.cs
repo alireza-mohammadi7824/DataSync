@@ -20,6 +20,9 @@ public class MonitoringPermissionDefinitionProvider : PermissionDefinitionProvid
 
         var dashboard = monitoringGroup.AddPermission(MonitoringPermissions.Dashboard.Default, L("Permission:Monitoring.Dashboard"));
         dashboard.AddChild(MonitoringPermissions.Dashboard.View, L("Permission:Monitoring.Dashboard.View"));
+
+        var history = monitoringGroup.AddPermission(MonitoringPermissions.History.Default, L("Permission:Monitoring.History"));
+        history.AddChild(MonitoringPermissions.History.View, L("Permission:Monitoring.History.View"));
     }
 
     private static LocalizableString L(string name)
