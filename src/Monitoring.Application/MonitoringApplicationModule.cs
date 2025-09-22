@@ -5,6 +5,7 @@ using Monitoring.Alerts;
 using Monitoring.Execution;
 using Monitoring.HealthChecks;
 using Monitoring.Options;
+using Monitoring.Retention;
 using Monitoring.Workers;
 using Microsoft.Extensions.Options;
 using Volo.Abp;
@@ -38,21 +39,23 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
         context.Services.AddTransient<HealthCheckExecutor>();
         context.Services.AddTransient<IMonitoringCheckService, MonitoringCheckService>();
-        context.Services.AddSingleton<MonitoringRetentionManager>();
         context.Services.AddSingleton<BulkCheckQueue>();
         context.Services.AddSingleton<IBulkCheckQueue>(sp => sp.GetRequiredService<BulkCheckQueue>());
         context.Services.AddSingleton<ITargetRunLock, DatabaseTargetRunLock>();
         context.Services.AddHostedService<MonitoringWorker>();
         context.Services.AddHostedService<BulkCheckProcessor>();
-        context.Services.AddHostedService<PurgeWorker>();
+        context.Services.AddHostedService<MonitoringRetentionWorker>();
 
         var configuration = context.Services.GetConfiguration();
         Configure<MonitoringOptions>(configuration.GetSection("Monitoring"));
-
+        Configure<MonitoringRetentionOptions>(configuration.GetSection("Monitoring:Retention"));
+        
         Configure<AbpAutoMapperOptions>(options =>
         {
             options.AddMaps<MonitoringApplicationModule>();
         });
+
+        context.Services.AddSingleton<IValidateOptions<MonitoringRetentionOptions>, MonitoringRetentionOptionsValidator>();
     }
 
     public override void OnApplicationInitialization(ApplicationInitializationContext context)
