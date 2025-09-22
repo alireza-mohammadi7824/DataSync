@@ -4,8 +4,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Monitoring.Endpoints;
 using Monitoring.Execution;
-using Monitoring.HealthChecks;
 using Monitoring.Options;
 using Monitoring.Targets;
 using Shouldly;
@@ -22,7 +22,7 @@ public class HealthCheckExecutorTests
         var options = Options.Create(new MonitoringOptions());
         var metrics = new ExecutionMetrics();
         var executor = new HealthCheckExecutor(
-            new StaticProviderResolver(new SequenceProvider(new Queue<HealthCheckResult>())),
+            new HealthCheckProviderResolver(new[] { new SequenceProvider(new Queue<HealthCheckResult>()) }),
             new FailingRunLock(),
             new TestClock(DateTime.UtcNow),
             options,
@@ -53,7 +53,7 @@ public class HealthCheckExecutorTests
         });
 
         var executor = new HealthCheckExecutor(
-            new StaticProviderResolver(new SequenceProvider(results)),
+            new HealthCheckProviderResolver(new[] { new SequenceProvider(results) }),
             new SuccessfulRunLock(),
             new TestClock(DateTime.UtcNow),
             options,
@@ -120,22 +120,12 @@ public class HealthCheckExecutorTests
             _results = results;
         }
 
-        public Task<HealthCheckResult> CheckAsync(MonitoringTarget target, string triggerSource, CancellationToken cancellationToken = default)
+        public EndpointType Type => EndpointType.Api;
+
+        public Task<HealthCheckResult> RunAsync(MonitoringTarget target, ParsedEndpoint endpoint, string triggerSource, CancellationToken ct)
         {
             return Task.FromResult(_results.Dequeue());
         }
-    }
-
-    private sealed class StaticProviderResolver : IHealthCheckProviderResolver
-    {
-        private readonly IHealthCheckProvider _provider;
-
-        public StaticProviderResolver(IHealthCheckProvider provider)
-        {
-            _provider = provider;
-        }
-
-        public IHealthCheckProvider Resolve(ServiceType type) => _provider;
     }
 
     private sealed class FailingRunLock : ITargetRunLock

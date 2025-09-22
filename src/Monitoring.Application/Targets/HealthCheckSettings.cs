@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Monitoring.HealthChecks;
+namespace Monitoring.Targets;
 
 public sealed class WebsiteSettings
 {

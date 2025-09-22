@@ -4,9 +4,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Monitoring.HealthChecks;
 using Monitoring.Options;
 using Monitoring.Targets;
+using Monitoring.Endpoints;
 using Volo.Abp.Timing;
 
 namespace Monitoring.Execution;
@@ -16,7 +16,7 @@ public sealed class HealthCheckExecutor
     private const int DefaultTimeoutSeconds = 5;
     private const int BackoffCapSeconds = 30;
 
-    private readonly IHealthCheckProviderResolver _providerResolver;
+    private readonly HealthCheckProviderResolver _providerResolver;
     private readonly ITargetRunLock _runLock;
     private readonly IClock _clock;
     private readonly MonitoringOptions _options;
@@ -24,7 +24,7 @@ public sealed class HealthCheckExecutor
     private readonly ILogger<HealthCheckExecutor> _logger;
 
     public HealthCheckExecutor(
-        IHealthCheckProviderResolver providerResolver,
+        HealthCheckProviderResolver providerResolver,
         ITargetRunLock runLock,
         IClock clock,
         IOptions<MonitoringOptions> options,
@@ -73,7 +73,18 @@ public sealed class HealthCheckExecutor
 
         _metrics.IncrementChecksStarted();
 
-        var provider = _providerResolver.Resolve(target.Type);
+        if (!EndpointParser.TryParse(target.Endpoint, MapEndpointType(target.Type), out var parsedEndpoint, out var parseError))
+        {
+            _metrics.IncrementChecksFailed();
+            _logger.LogWarning(
+                "Failed to parse endpoint for target {TargetId}: {Error}",
+                target.Id,
+                parseError ?? "Invalid endpoint");
+            var failed = new HealthCheckResult(false, null, parseError ?? "Invalid endpoint", triggerSource);
+            return HealthCheckExecutionResult.Completed(failed, _clock.Now, 0);
+        }
+
+        var provider = _providerResolver.Get(parsedEndpoint.Type);
         var maxAttempts = Math.Max(1, target.MaxRetryAttempts + 1);
         var timeout = TimeSpan.FromSeconds(timeoutSeconds);
         var baseDelaySeconds = Math.Max(1, target.RetryDelaySeconds);
@@ -89,7 +100,7 @@ public sealed class HealthCheckExecutor
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                var result = await provider.CheckAsync(target, triggerSource, attemptCts.Token);
+                var result = await provider.RunAsync(target, parsedEndpoint, triggerSource, attemptCts.Token);
                 stopwatch.Stop();
                 var responseMs = EnsureResponseTime(result.ResponseTimeMs, stopwatch.ElapsedMilliseconds);
                 result = result with { ResponseTimeMs = responseMs };
@@ -180,20 +191,32 @@ public sealed class HealthCheckExecutor
 
         return Math.Max(1, timeout);
     }
+
+    private static EndpointType MapEndpointType(ServiceType type)
+        => type switch
+        {
+            ServiceType.Website => EndpointType.Website,
+            ServiceType.Api => EndpointType.Api,
+            ServiceType.Tcp => EndpointType.Tcp,
+            ServiceType.Redis => EndpointType.Redis,
+            _ => EndpointType.Website
+        };
 }
 
 public sealed record HealthCheckExecutionResult
 {
     private HealthCheckExecutionResult(bool skipped, string? skipReason, HealthCheckResult result, DateTime completedAt, int attempts)
     {
-        Skipped = skipped;
+        IsSkipped = skipped;
         SkipReason = skipReason;
         Result = result;
         CompletedAt = completedAt;
         Attempts = attempts;
     }
 
-    public bool Skipped { get; }
+    public bool IsSkipped { get; }
+
+    public bool Skipped => IsSkipped;
 
     public string? SkipReason { get; }
 

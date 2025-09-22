@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Monitoring.Execution;
-using Monitoring.HealthChecks;
+using Monitoring.Endpoints;
 using Monitoring.Options;
 using Monitoring.Permissions;
 using Volo.Abp;
@@ -680,11 +680,11 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         switch (input.Type)
         {
             case ServiceType.Website:
-                EnsureValidHttpEndpoint(input.Endpoint);
+                EnsureEndpointValid(input.Endpoint, EndpointType.Website, "Endpoint must be an absolute HTTP or HTTPS URL.");
                 DeserializeSettings<WebsiteSettings>(input.SettingsJson, "Website settings");
                 break;
             case ServiceType.Api:
-                EnsureValidHttpEndpoint(input.Endpoint);
+                EnsureEndpointValid(input.Endpoint, EndpointType.Api, "Endpoint must be an absolute HTTP or HTTPS URL.");
                 DeserializeSettings<ApiSettings>(input.SettingsJson, "API settings");
                 break;
             case ServiceType.Tcp:
@@ -700,7 +700,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
     private void ValidateTcpConfiguration(string endpoint, string? settingsJson)
     {
-        if (EndpointParser.TryParseHostPort(endpoint, out _, out _))
+        if (EndpointParser.TryParse(endpoint, EndpointType.Tcp, out _, out _))
         {
             DeserializeSettings<TcpSettings>(settingsJson, "TCP settings");
             return;
@@ -715,14 +715,14 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
     private void ValidateRedisConfiguration(string endpoint, string? settingsJson)
     {
-        var endpointValid = EndpointParser.TryParseHostPort(endpoint, out _, out _);
+        var endpointValid = EndpointParser.TryParse(endpoint, EndpointType.Redis, out _, out _);
         var settings = DeserializeSettings<RedisSettings>(settingsJson, "Redis settings");
 
         if (settings.Endpoints is { Length: > 0 })
         {
             foreach (var candidate in settings.Endpoints)
             {
-                if (!EndpointParser.TryParseHostPort(candidate, out _, out _))
+                if (!EndpointParser.TryParse(candidate, EndpointType.Redis, out _, out _))
                 {
                     throw new UserFriendlyException("Redis endpoints must be expressed as host:port values.");
                 }
@@ -739,7 +739,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
             foreach (var sentinel in settings.Sentinels)
             {
-                if (!EndpointParser.TryParseHostPort(sentinel, out _, out _))
+                if (!EndpointParser.TryParse(sentinel, EndpointType.Redis, out _, out _))
                 {
                     throw new UserFriendlyException("Sentinel endpoints must be valid host:port values.");
                 }
@@ -753,7 +753,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
         if (!endpointValid)
         {
-            var hasEndpoint = settings.Endpoints != null && settings.Endpoints.Any(e => EndpointParser.TryParseHostPort(e, out _, out _));
+            var hasEndpoint = settings.Endpoints != null && settings.Endpoints.Any(e => EndpointParser.TryParse(e, EndpointType.Redis, out _, out _));
             if (!hasEndpoint)
             {
                 throw new UserFriendlyException("Provide at least one valid Redis endpoint.");
@@ -761,12 +761,11 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         }
     }
 
-    private static void EnsureValidHttpEndpoint(string endpoint)
+    private static void EnsureEndpointValid(string endpoint, EndpointType type, string errorMessage)
     {
-        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        if (!EndpointParser.TryParse(endpoint, type, out _, out _))
         {
-            throw new UserFriendlyException("Endpoint must be an absolute HTTP or HTTPS URL.");
+            throw new UserFriendlyException(errorMessage);
         }
     }
 

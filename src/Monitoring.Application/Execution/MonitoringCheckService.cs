@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Monitoring.Alerts;
-using Monitoring.HealthChecks;
 using Monitoring.Options;
 using Monitoring.Targets;
 using Volo.Abp;
