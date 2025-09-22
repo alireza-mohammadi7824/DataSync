@@ -388,7 +388,7 @@ public static class EndpointParser
             return result;
         }
 
-        if (query.StartsWith('?', StringComparison.Ordinal))
+        if (query.StartsWith("?", StringComparison.Ordinal))
         {
             query = query[1..];
         }
@@ -486,7 +486,7 @@ public static class EndpointParser
         string hostPart;
         string? portPart = null;
 
-        if (value.StartsWith('['))
+        if (value.StartsWith("[", StringComparison.Ordinal))
         {
             var endIndex = value.IndexOf(']');
             if (endIndex <= 0)
@@ -497,7 +497,7 @@ public static class EndpointParser
 
             hostPart = value[1..endIndex];
             var remainder = value[(endIndex + 1)..];
-            if (remainder.StartsWith(':'))
+            if (remainder.StartsWith(":", StringComparison.Ordinal))
             {
                 portPart = remainder[1..];
             }

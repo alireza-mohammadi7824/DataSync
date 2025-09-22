@@ -32,10 +32,10 @@ public class HealthCheckExecutorTests
         var target = CreateTarget();
         target.SetCurrentStatus(ServiceStatus.Online);
 
-        var result = await executor.ExecuteAsync(target, "manual", CancellationToken.None);
+        await Should.ThrowAsync<MonitoringCheckConflictException>(() => executor.ExecuteAsync(target, "manual", CancellationToken.None));
 
-        result.Skipped.ShouldBeTrue();
-        metrics.CreateSnapshot().ChecksSkipped.ShouldBe(1);
+        var snapshot = metrics.CreateSnapshot();
+        snapshot.LocksContended.ShouldBe(1);
     }
 
     [Fact]
@@ -65,15 +65,16 @@ public class HealthCheckExecutorTests
 
         var result = await executor.ExecuteAsync(target, "manual", CancellationToken.None);
 
-        result.Skipped.ShouldBeFalse();
-        result.Result.IsSuccess.ShouldBeTrue();
+        result.IsSkipped.ShouldBeFalse();
+        result.IsSuccess.ShouldBeTrue();
+        result.CompletedAt.ShouldNotBe(default);
         metrics.CreateSnapshot().ChecksSucceeded.ShouldBe(1);
     }
 
     private static MonitoringTarget CreateTarget(int maxRetries = 0)
     {
         var now = DateTime.UtcNow;
-        return new MonitoringTarget(
+        var target = new MonitoringTarget(
             Guid.NewGuid(),
             "api",
             ServiceType.Api,
@@ -85,6 +86,8 @@ public class HealthCheckExecutorTests
             true,
             ServiceStatus.Online,
             now);
+        target.SetSettingsJson($"{{\"maxRetryAttempts\":{maxRetries}}}");
+        return target;
     }
 
     private sealed class TestClock : IClock

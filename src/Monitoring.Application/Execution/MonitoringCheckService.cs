@@ -68,18 +68,20 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
     {
         var previousLastUpAt = target.LastUpAt;
 
-        var execution = await _executor.ExecuteAsync(target, triggerSource, cancellationToken);
-        if (execution.Skipped)
+        var executionResult = await _executor.ExecuteAsync(target, triggerSource, cancellationToken);
+        if (executionResult.IsSkipped)
         {
-            return CheckProcessingResult.Skipped(execution.SkipReason ?? "Skipped");
+            return CheckProcessingResult.Skipped(executionResult.SkipReason ?? "already-checking");
         }
+
+        var completedAt = executionResult.CompletedAt == default ? _clock.Now : executionResult.CompletedAt;
 
         using var uow = _unitOfWorkManager.Begin(requiresNew: true, isTransactional: false);
 
         var outcome = await MonitoringTargetCheckProcessor.ApplyResultAsync(
             target,
-            execution.Result,
-            execution.CompletedAt,
+            executionResult,
+            completedAt,
             _historyRepository,
             _outageRepository,
             _guidGenerator,
@@ -91,7 +93,7 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
         var alertsDispatched = 0;
         if (dispatchAlerts)
         {
-            var dispatches = await EvaluateAlertsAsync(target, outcome, execution.Result, execution.CompletedAt, previousLastUpAt, cancellationToken);
+            var dispatches = await EvaluateAlertsAsync(target, outcome, executionResult, completedAt, previousLastUpAt, cancellationToken);
             if (dispatches.Count > 0)
             {
                 alertsDispatched = dispatches.Count;
@@ -99,7 +101,7 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
             }
         }
 
-        return CheckProcessingResult.Completed(execution.Result, execution.CompletedAt, alertsDispatched, outcome);
+        return CheckProcessingResult.Completed(executionResult, completedAt, alertsDispatched, outcome);
     }
 
     private async Task<List<AlertDispatch>> EvaluateAlertsAsync(

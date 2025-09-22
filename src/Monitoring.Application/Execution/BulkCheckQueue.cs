@@ -5,6 +5,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Options;
+using Monitoring.Options;
 using Volo.Abp.Guids;
 
 namespace Monitoring.Execution;
@@ -15,13 +17,17 @@ public sealed class BulkCheckQueue : IBulkCheckQueue
     private readonly ConcurrentDictionary<Guid, BatchState> _batches = new();
     private readonly IGuidGenerator _guidGenerator;
 
-    public BulkCheckQueue(IGuidGenerator guidGenerator)
+    public BulkCheckQueue(IGuidGenerator guidGenerator, IOptions<MonitoringOptions> options)
     {
         _guidGenerator = guidGenerator;
-        _channel = Channel.CreateUnbounded<CheckWorkItem>(new UnboundedChannelOptions
+        var execution = options.Value.Execution;
+        var maxConcurrent = Math.Max(1, execution.MaxConcurrentChecks);
+        var capacity = Math.Max(maxConcurrent * 4, maxConcurrent);
+        _channel = Channel.CreateBounded<CheckWorkItem>(new BoundedChannelOptions(capacity)
         {
             SingleReader = false,
-            SingleWriter = false
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
         });
     }
 

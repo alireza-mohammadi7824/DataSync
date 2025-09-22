@@ -104,6 +104,14 @@ public sealed class BulkCheckProcessor : BackgroundService
         {
             throw;
         }
+        catch (MonitoringCheckConflictException ex)
+        {
+            _queue.Complete(workItem.BatchId, success: false, skipped: true);
+            _logger.LogDebug(
+                ex,
+                "Bulk check skipped target {TargetId} due to lock contention",
+                workItem.TargetId);
+        }
         catch (Exception ex)
         {
             _queue.Complete(workItem.BatchId, success: false, skipped: false);
