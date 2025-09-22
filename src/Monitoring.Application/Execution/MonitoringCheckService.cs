@@ -85,13 +85,14 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
             _historyRepository,
             _outageRepository,
             _guidGenerator,
+            executionResult.SuppressOutageProcessing,
             cancellationToken);
 
         await _targetRepository.UpdateAsync(target, autoSave: true, cancellationToken: cancellationToken);
         await uow.CompleteAsync();
 
         var alertsDispatched = 0;
-        if (dispatchAlerts)
+        if (dispatchAlerts && !executionResult.SuppressAlerts)
         {
             var dispatches = await EvaluateAlertsAsync(target, outcome, executionResult, completedAt, previousLastUpAt, cancellationToken);
             if (dispatches.Count > 0)
@@ -153,7 +154,8 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
             return dispatches;
         }
 
-        var underMaintenance = suppressDuringMaintenance && await HasActiveMaintenanceAsync(target.Id, timestamp, cancellationToken);
+        var maintenanceState = await GetMaintenanceStateAsync(target.Id, timestamp, cancellationToken);
+        var underMaintenance = suppressDuringMaintenance && maintenanceState.HasActive;
 
         var evaluation = AlertEvaluator.Evaluate(new AlertEvaluationInput(
             outcome.PreviousStatus,
@@ -194,7 +196,26 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
             result.ResponseTimeMs,
             evaluation.CurrentOutage);
 
-        dispatches.AddRange(AlertDispatch.Create(snapshot, payload, channelDescriptors));
+        var snapshotSummary = $"{snapshot.Name} ({snapshot.Status})";
+        var payloadSummary = payload.Summary;
+
+        foreach (var descriptor in channelDescriptors)
+        {
+            if (descriptor.Channel == null)
+            {
+                continue;
+            }
+
+            var dispatch = AlertDispatch.Create(
+                descriptor.Name,
+                snapshotSummary,
+                payloadSummary,
+                snapshot,
+                payload,
+                descriptor.Channel);
+
+            dispatches.Add(dispatch);
+        }
         return dispatches;
     }
 
@@ -204,30 +225,31 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
         {
             try
             {
-                await dispatch.NotificationChannel.SendAsync(dispatch.TargetSnapshot, dispatch.Payload, cancellationToken);
+                var channel = dispatch.ChannelInstance ?? _channelResolver.Resolve(dispatch.Channel);
+                if (channel == null || dispatch.SnapshotModel == null || dispatch.PayloadModel == null)
+                {
+                    continue;
+                }
+
+                await channel.SendAsync(dispatch.SnapshotModel, dispatch.PayloadModel, cancellationToken);
                 _logger.LogInformation(
                     "Alert sent for target {TargetId} via {Channel} for event {EventType}",
-                    dispatch.TargetSnapshot.TargetId,
+                    dispatch.SnapshotModel.TargetId,
                     dispatch.Channel,
-                    dispatch.Payload.EventType);
+                    dispatch.PayloadModel.EventType);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex,
                     "Failed to send alert for target {TargetId} via {Channel}",
-                    dispatch.TargetSnapshot.TargetId,
+                    dispatch.SnapshotModel?.TargetId,
                     dispatch.Channel);
             }
         }
     }
 
-    private async Task<bool> HasActiveMaintenanceAsync(Guid targetId, DateTime timestamp, CancellationToken cancellationToken)
-    {
-        return await _maintenanceRepository.AnyAsync(
-            window => window.StartUtc <= timestamp && window.EndUtc >= timestamp &&
-                      (window.TargetId == null || window.TargetId == targetId),
-            cancellationToken);
-    }
+    private Task<MaintenanceState> GetMaintenanceStateAsync(Guid targetId, DateTime timestamp, CancellationToken cancellationToken)
+        => MaintenanceWindowHelper.GetStateAsync(_maintenanceRepository, targetId, timestamp, cancellationToken);
 
     private static Dictionary<string, string[]> CloneChannels(Dictionary<string, string[]> source)
     {

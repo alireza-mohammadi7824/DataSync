@@ -1,53 +1,50 @@
 using System;
-using System.Collections.Generic;
 using Monitoring.Targets;
-using Volo.Abp;
 
 namespace Monitoring.Alerts;
 
 public sealed record AlertDispatch(
     string Channel,
-    TargetSnapshot TargetSnapshot,
-    AlertPayload Payload,
-    INotificationChannel NotificationChannel)
+    string TargetSnapshot,
+    string Payload)
 {
-    public static List<AlertDispatch> Create(
-        TargetSnapshot targetSnapshot,
-        AlertPayload payload,
-        IReadOnlyList<NotificationChannelDescriptor> descriptors)
+    public TargetSnapshot? SnapshotModel { get; init; }
+
+    public AlertPayload? PayloadModel { get; init; }
+
+    public INotificationChannel? ChannelInstance { get; init; }
+
+    public static AlertDispatch Create(string channel, string targetSnapshot, string payload)
+        => new(channel, targetSnapshot, payload);
+
+    public static AlertDispatch Create(
+        string channel,
+        string targetSnapshot,
+        string payload,
+        TargetSnapshot snapshotModel,
+        AlertPayload payloadModel,
+        INotificationChannel channelInstance)
     {
-        if (targetSnapshot == null)
+        if (snapshotModel == null)
         {
-            throw new ArgumentNullException(nameof(targetSnapshot));
+            throw new ArgumentNullException(nameof(snapshotModel));
         }
 
-        if (payload == null)
+        if (payloadModel == null)
         {
-            throw new ArgumentNullException(nameof(payload));
+            throw new ArgumentNullException(nameof(payloadModel));
         }
 
-        var dispatches = new List<AlertDispatch>();
-        if (descriptors == null || descriptors.Count == 0)
+        if (channelInstance == null)
         {
-            return dispatches;
+            throw new ArgumentNullException(nameof(channelInstance));
         }
 
-        foreach (var descriptor in descriptors)
+        return new AlertDispatch(channel, targetSnapshot, payload)
         {
-            if (descriptor == null)
-            {
-                continue;
-            }
-
-            var name = descriptor.Name?.Trim();
-            if (name.IsNullOrWhiteSpace() || descriptor.Channel == null)
-            {
-                continue;
-            }
-
-            dispatches.Add(new AlertDispatch(name!, targetSnapshot, payload, descriptor.Channel));
-        }
-
-        return dispatches;
+            SnapshotModel = snapshotModel,
+            PayloadModel = payloadModel,
+            ChannelInstance = channelInstance
+        };
     }
 }

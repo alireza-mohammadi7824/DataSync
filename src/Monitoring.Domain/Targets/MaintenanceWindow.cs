@@ -14,19 +14,36 @@ public class MaintenanceWindow : FullAuditedEntity<Guid>
 
     public string? Reason { get; private set; }
 
+    public bool IsGlobal { get; private set; }
+
+    public bool RecordButDontAlert { get; private set; }
+
+    public DateTime CreatedAt { get; private set; }
+
     protected MaintenanceWindow()
     {
     }
 
-    public MaintenanceWindow(Guid id, Guid? targetId, DateTime startUtc, DateTime endUtc, string? reason)
+    public MaintenanceWindow(
+        Guid id,
+        Guid? targetId,
+        DateTime startUtc,
+        DateTime endUtc,
+        string? reason,
+        bool recordButDontAlert,
+        DateTime createdAt)
         : base(id)
     {
-        TargetId = targetId;
-        UpdateWindow(startUtc, endUtc, reason);
+        CreatedAt = NormalizeUtc(createdAt == default ? DateTime.UtcNow : createdAt, nameof(CreatedAt));
+        Update(targetId, startUtc, endUtc, reason, recordButDontAlert);
     }
 
-    public void UpdateWindow(DateTime startUtc, DateTime endUtc, string? reason)
+    public void Update(Guid? targetId, DateTime startUtc, DateTime endUtc, string? reason, bool recordButDontAlert)
     {
+        TargetId = targetId;
+        IsGlobal = !targetId.HasValue;
+        RecordButDontAlert = recordButDontAlert;
+
         startUtc = NormalizeUtc(startUtc, nameof(StartUtc));
         endUtc = NormalizeUtc(endUtc, nameof(EndUtc));
 
@@ -52,6 +69,11 @@ public class MaintenanceWindow : FullAuditedEntity<Guid>
 
     private static DateTime NormalizeUtc(DateTime value, string field)
     {
+        if (value == default)
+        {
+            return DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
+        }
+
         if (value.Kind == DateTimeKind.Unspecified)
         {
             return DateTime.SpecifyKind(value, DateTimeKind.Utc);

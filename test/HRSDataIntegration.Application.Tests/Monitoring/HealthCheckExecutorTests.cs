@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -9,6 +11,9 @@ using Monitoring.Execution;
 using Monitoring.Options;
 using Monitoring.Targets;
 using Shouldly;
+using Volo.Abp.Domain.Entities;
+using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Linq;
 using Volo.Abp.Timing;
 using Xunit;
 
@@ -27,6 +32,7 @@ public class HealthCheckExecutorTests
             new TestClock(DateTime.UtcNow),
             options,
             metrics,
+            new MaintenanceRepositoryStub(),
             NullLogger<HealthCheckExecutor>.Instance);
 
         var target = CreateTarget();
@@ -58,6 +64,7 @@ public class HealthCheckExecutorTests
             new TestClock(DateTime.UtcNow),
             options,
             metrics,
+            new MaintenanceRepositoryStub(),
             NullLogger<HealthCheckExecutor>.Instance);
 
         var target = CreateTarget(maxRetries: 1);
@@ -157,5 +164,285 @@ public class HealthCheckExecutorTests
 
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class MaintenanceRepositoryStub : IReadOnlyRepository<MaintenanceWindow, Guid>
+    {
+        private readonly List<MaintenanceWindow> _items;
+
+        public MaintenanceRepositoryStub(IEnumerable<MaintenanceWindow>? items = null)
+        {
+            _items = items?.ToList() ?? new List<MaintenanceWindow>();
+            AsyncExecuter = new SynchronousAsyncExecuter();
+        }
+
+        public IAsyncQueryableExecuter AsyncExecuter { get; }
+
+        public Task<IQueryable<MaintenanceWindow>> GetQueryableAsync(bool includeDetails = true, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.AsQueryable());
+
+        public Task<IQueryable<MaintenanceWindow>> GetQueryableAsync(CancellationToken cancellationToken)
+            => Task.FromResult(_items.AsQueryable());
+
+        public Task<IQueryable<MaintenanceWindow>> WithDetailsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.AsQueryable());
+
+        public Task<IQueryable<MaintenanceWindow>> WithDetailsAsync(params Expression<Func<MaintenanceWindow, object>>[] propertySelectors)
+            => Task.FromResult(_items.AsQueryable());
+
+        public IQueryable<MaintenanceWindow> WithDetails()
+            => _items.AsQueryable();
+
+        public IQueryable<MaintenanceWindow> WithDetails(params Expression<Func<MaintenanceWindow, object>>[] propertySelectors)
+            => _items.AsQueryable();
+
+        public Task<MaintenanceWindow> GetAsync(Guid id, bool includeDetails = true, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.First(x => x.Id == id));
+
+        public Task<MaintenanceWindow> GetAsync(Expression<Func<MaintenanceWindow, bool>> predicate, bool includeDetails = true, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.First(predicate.Compile()));
+
+        public Task<MaintenanceWindow?> FindAsync(Guid id, bool includeDetails = true, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.FirstOrDefault(x => x.Id == id));
+
+        public Task<MaintenanceWindow?> FindAsync(Expression<Func<MaintenanceWindow, bool>> predicate, bool includeDetails = true, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.FirstOrDefault(predicate.Compile()));
+
+        public Task<List<MaintenanceWindow>> GetListAsync(bool includeDetails = false, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.ToList());
+
+        public Task<List<MaintenanceWindow>> GetListAsync(Expression<Func<MaintenanceWindow, bool>> predicate, bool includeDetails = false, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.Where(predicate.Compile()).ToList());
+
+        public Task<List<MaintenanceWindow>> GetPagedListAsync(int skipCount, int maxResultCount, string sorting, bool includeDetails = false, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.Skip(skipCount).Take(maxResultCount).ToList());
+
+        public Task<long> GetCountAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult((long)_items.Count);
+
+        public Task<long> GetCountAsync(Expression<Func<MaintenanceWindow, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult((long)_items.Count(predicate.Compile()));
+
+        public Task<int> CountAsync(Expression<Func<MaintenanceWindow, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.Count(predicate.Compile()));
+
+        public Task<bool> AnyAsync(Expression<Func<MaintenanceWindow, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.Any(predicate.Compile()));
+
+        public Task<bool> AnyAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(_items.Any());
+    }
+
+    private sealed class SynchronousAsyncExecuter : IAsyncQueryableExecuter
+    {
+        public Task<List<T>> ToListAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).ToList());
+
+        public Task<T[]> ToArrayAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).ToArray());
+
+        public Task<T> FirstAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).First());
+
+        public Task<T> FirstAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, predicate, cancellationToken).First());
+
+        public Task<T?> FirstOrDefaultAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).FirstOrDefault());
+
+        public Task<T?> FirstOrDefaultAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, predicate, cancellationToken).FirstOrDefault());
+
+        public Task<T> SingleAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Single());
+
+        public Task<T> SingleAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, predicate, cancellationToken).Single());
+
+        public Task<T?> SingleOrDefaultAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).SingleOrDefault());
+
+        public Task<T?> SingleOrDefaultAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, predicate, cancellationToken).SingleOrDefault());
+
+        public Task<T> LastAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Last());
+
+        public Task<T> LastAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, predicate, cancellationToken).Last());
+
+        public Task<T?> LastOrDefaultAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).LastOrDefault());
+
+        public Task<T?> LastOrDefaultAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, predicate, cancellationToken).LastOrDefault());
+
+        public Task<int> CountAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Count());
+
+        public Task<int> CountAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, predicate, cancellationToken).Count());
+
+        public Task<long> LongCountAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).LongCount());
+
+        public Task<long> LongCountAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, predicate, cancellationToken).LongCount());
+
+        public Task<bool> AnyAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Any());
+
+        public Task<bool> AnyAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, predicate, cancellationToken).Any());
+
+        public Task<bool> AllAsync<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).All(predicate.Compile()));
+
+        public Task<bool> ContainsAsync<T>(IQueryable<T> queryable, T item, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Contains(item));
+
+        public Task<T> MaxAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Max());
+
+        public Task<TResult> MaxAsync<T, TResult>(IQueryable<T> queryable, Expression<Func<T, TResult>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Max());
+
+        public Task<T> MinAsync<T>(IQueryable<T> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Min());
+
+        public Task<TResult> MinAsync<T, TResult>(IQueryable<T> queryable, Expression<Func<T, TResult>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Min());
+
+        public Task<int> SumAsync(IQueryable<int> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<int?> SumAsync(IQueryable<int?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<long> SumAsync(IQueryable<long> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<long?> SumAsync(IQueryable<long?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<float> SumAsync(IQueryable<float> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<float?> SumAsync(IQueryable<float?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<double> SumAsync(IQueryable<double> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<double?> SumAsync(IQueryable<double?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<decimal> SumAsync(IQueryable<decimal> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<decimal?> SumAsync(IQueryable<decimal?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Sum());
+
+        public Task<int> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, int>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<int?> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, int?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<long> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, long>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<long?> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, long?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<float> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, float>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<float?> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, float?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<double> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, double>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<double?> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, double?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<decimal> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, decimal>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<decimal?> SumAsync<T>(IQueryable<T> queryable, Expression<Func<T, decimal?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Sum());
+
+        public Task<double> AverageAsync(IQueryable<int> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<double?> AverageAsync(IQueryable<int?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<double> AverageAsync(IQueryable<long> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<double?> AverageAsync(IQueryable<long?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<float> AverageAsync(IQueryable<float> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<float?> AverageAsync(IQueryable<float?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<double> AverageAsync(IQueryable<double> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<double?> AverageAsync(IQueryable<double?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<decimal> AverageAsync(IQueryable<decimal> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<decimal?> AverageAsync(IQueryable<decimal?> queryable, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, cancellationToken).Average());
+
+        public Task<double> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, int>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        public Task<double?> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, int?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        public Task<double> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, long>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        public Task<double?> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, long?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        public Task<float> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, float>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        public Task<float?> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, float?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        public Task<double> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, double>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        public Task<double?> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, double?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        public Task<decimal> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, decimal>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        public Task<decimal?> AverageAsync<T>(IQueryable<T> queryable, Expression<Func<T, decimal?>> selector, CancellationToken cancellationToken = default)
+            => Task.FromResult(Enumerate(queryable, selector, cancellationToken).Average());
+
+        private static IEnumerable<T> Enumerate<T>(IQueryable<T> queryable, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return queryable.ToList();
+        }
+
+        private static IEnumerable<T> Enumerate<T>(IQueryable<T> queryable, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken)
+            => Enumerate(queryable.Where(predicate.Compile()).AsQueryable(), cancellationToken);
+
+        private static IEnumerable<TResult> Enumerate<T, TResult>(IQueryable<T> queryable, Expression<Func<T, TResult>> selector, CancellationToken cancellationToken)
+            => Enumerate(queryable, cancellationToken).Select(selector.Compile());
     }
 }

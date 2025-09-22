@@ -484,20 +484,50 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
         ValidateMaintenanceWindow(input);
 
-        if (input.TargetId.HasValue)
+        var targetId = input.IsGlobal ? (Guid?)null : input.TargetId;
+
+        if (targetId.HasValue)
         {
-            await EnsureTargetExistsAsync(input.TargetId.Value);
+            await EnsureTargetExistsAsync(targetId.Value);
         }
 
         var entity = new MaintenanceWindow(
             _guidGenerator.Create(),
-            input.TargetId,
+            targetId,
             input.StartUtc,
             input.EndUtc,
-            input.Reason);
+            input.Reason,
+            input.RecordButDontAlert,
+            Clock.Now);
 
         var created = await _maintenanceRepository.InsertAsync(entity, autoSave: true);
         return ObjectMapper.Map<MaintenanceWindow, MaintenanceWindowDto>(created);
+    }
+
+    public async Task<MaintenanceWindowDto> UpdateMaintenanceAsync(Guid id, CreateUpdateMaintenanceWindowDto input)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Edit);
+
+        if (input == null)
+        {
+            throw new ArgumentNullException(nameof(input));
+        }
+
+        ValidateMaintenanceWindow(input);
+
+        var entity = await _maintenanceRepository.GetAsync(id);
+
+        var targetId = input.IsGlobal ? (Guid?)null : input.TargetId;
+        if (targetId.HasValue)
+        {
+            await EnsureTargetExistsAsync(targetId.Value);
+        }
+
+        entity.Update(targetId, input.StartUtc, input.EndUtc, input.Reason, input.RecordButDontAlert);
+
+        await _maintenanceRepository.UpdateAsync(entity, autoSave: true);
+
+        return ObjectMapper.Map<MaintenanceWindow, MaintenanceWindowDto>(entity);
     }
 
     public async Task DeleteMaintenanceAsync(Guid id)
@@ -618,6 +648,11 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         if (input.EndUtc <= input.StartUtc)
         {
             throw new UserFriendlyException("EndUtc must be greater than StartUtc.");
+        }
+
+        if (!input.IsGlobal && !input.TargetId.HasValue)
+        {
+            throw new UserFriendlyException("TargetId is required for non-global maintenance windows.");
         }
 
         if (!input.Reason.IsNullOrWhiteSpace() && input.Reason!.Length > MaintenanceWindowConsts.ReasonMaxLength)

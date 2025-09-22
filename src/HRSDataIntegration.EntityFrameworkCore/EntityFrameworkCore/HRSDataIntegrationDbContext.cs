@@ -255,6 +255,9 @@ public class HRSDataIntegrationDbContext :
             b.ToTable(MonitoringConsts.DbTablePrefix + "Maintenance", MonitoringConsts.DbSchema);
             b.ConfigureByConvention();
             b.Property(x => x.Reason).HasMaxLength(MaintenanceWindowConsts.ReasonMaxLength);
+            b.Property(x => x.IsGlobal).IsRequired();
+            b.Property(x => x.RecordButDontAlert).IsRequired();
+            b.Property(x => x.CreatedAt).IsRequired();
             b.HasIndex(x => new { x.TargetId, x.StartUtc, x.EndUtc })
                 .HasDatabaseName("IX_Target_Start_End");
             b.HasOne<MonitoringTarget>()

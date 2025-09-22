@@ -12,6 +12,8 @@ public interface INotificationChannel
 public interface INotificationChannelResolver
 {
     IReadOnlyList<NotificationChannelDescriptor> ResolveChannels(AlertChannelConfiguration configuration);
+
+    INotificationChannel Resolve(string channel);
 }
 
 public sealed record NotificationChannelDescriptor(string Name, INotificationChannel Channel);

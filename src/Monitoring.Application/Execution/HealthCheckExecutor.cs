@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Monitoring.Endpoints;
 using Monitoring.Options;
 using Monitoring.Targets;
+using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Timing;
 
 namespace Monitoring.Execution;
@@ -23,6 +24,7 @@ public sealed class HealthCheckExecutor
     private readonly IClock _clock;
     private readonly MonitoringOptions _options;
     private readonly ExecutionMetrics _metrics;
+    private readonly IReadOnlyRepository<MaintenanceWindow, Guid> _maintenanceRepository;
     private readonly ILogger<HealthCheckExecutor> _logger;
 
     public HealthCheckExecutor(
@@ -31,6 +33,7 @@ public sealed class HealthCheckExecutor
         IClock clock,
         IOptions<MonitoringOptions> options,
         ExecutionMetrics metrics,
+        IReadOnlyRepository<MaintenanceWindow, Guid> maintenanceRepository,
         ILogger<HealthCheckExecutor> logger)
     {
         _providerResolver = providerResolver;
@@ -38,6 +41,7 @@ public sealed class HealthCheckExecutor
         _clock = clock;
         _options = options.Value;
         _metrics = metrics;
+        _maintenanceRepository = maintenanceRepository;
         _logger = logger;
     }
 
@@ -61,6 +65,21 @@ public sealed class HealthCheckExecutor
         await using (lockHandle)
         {
             var now = _clock.Now;
+            var maintenanceState = await MaintenanceWindowHelper.GetStateAsync(
+                _maintenanceRepository,
+                target.Id,
+                now,
+                cancellationToken);
+
+            if (maintenanceState.ShouldSkip)
+            {
+                _metrics.IncrementChecksSkipped();
+                var skipped = HealthCheckResult.CreateSkipped(triggerSource, "maintenance", now);
+                _logger.LogInformation(
+                    "Skipped check for target {TargetId} because maintenance is active",
+                    target.Id);
+                return skipped;
+            }
             if (target.CurrentStatus == ServiceStatus.Checking &&
                 target.LastCheckedAt.HasValue &&
                 now - target.LastCheckedAt.Value < attemptTimeout)
@@ -117,6 +136,7 @@ public sealed class HealthCheckExecutor
                         ResponseTimeMs = durationMs,
                         CompletedAt = completedAt
                     };
+                    providerResult = ApplyMaintenancePolicies(providerResult, maintenanceState);
 
                     var outcome = providerResult.IsSkipped
                         ? "skipped"
@@ -150,6 +170,7 @@ public sealed class HealthCheckExecutor
                     {
                         CompletedAt = completedAt
                     };
+                    lastResult = ApplyMaintenancePolicies(lastResult, maintenanceState);
 
                     _logger.LogWarning(
                         "Health check attempt {Attempt} for target {TargetId} via {Provider} ({TriggerSource}) timed out after {Duration}ms",
@@ -172,6 +193,7 @@ public sealed class HealthCheckExecutor
                     {
                         CompletedAt = completedAt
                     };
+                    lastResult = ApplyMaintenancePolicies(lastResult, maintenanceState);
 
                     _logger.LogWarning(
                         ex,
@@ -208,7 +230,7 @@ public sealed class HealthCheckExecutor
             {
                 CompletedAt = _clock.Now
             };
-            return lastResult;
+            return ApplyMaintenancePolicies(lastResult, maintenanceState);
         }
     }
 
@@ -247,4 +269,18 @@ public sealed class HealthCheckExecutor
             ServiceType.Redis => EndpointType.Redis,
             _ => EndpointType.Website
         };
+
+    private static HealthCheckResult ApplyMaintenancePolicies(HealthCheckResult result, MaintenanceState maintenanceState)
+    {
+        if (!maintenanceState.RecordButDontAlert)
+        {
+            return result;
+        }
+
+        return result with
+        {
+            SuppressAlerts = true,
+            SuppressOutageProcessing = true
+        };
+    }
 }

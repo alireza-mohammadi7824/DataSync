@@ -79,6 +79,27 @@ public sealed class NotificationChannelResolver : INotificationChannelResolver
         return channels;
     }
 
+    public INotificationChannel Resolve(string channel)
+    {
+        if (channel.IsNullOrWhiteSpace())
+        {
+            throw new InvalidOperationException("Channel name must be provided.");
+        }
+
+        var normalized = channel.Trim().ToLowerInvariant();
+        var defaults = _options.AlertDefaults.DefaultChannels ?? new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        defaults.TryGetValue(normalized, out var values);
+        var entries = values ?? Array.Empty<string>();
+
+        return normalized switch
+        {
+            "email" => CreateEmailChannel(entries),
+            "webhook" => CreateWebhookChannel(entries),
+            "telegram" => CreateTelegramChannel(entries),
+            _ => throw new InvalidOperationException($"Notification channel '{channel}' is not registered.")
+        };
+    }
+
     public static Dictionary<string, string[]> ParseChannelsJson(string? channelsJson)
     {
         if (channelsJson.IsNullOrWhiteSpace())

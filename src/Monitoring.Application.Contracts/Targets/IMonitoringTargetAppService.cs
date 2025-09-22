@@ -42,5 +42,7 @@ public interface IMonitoringTargetAppService : IApplicationService
 
     Task<MaintenanceWindowDto> CreateMaintenanceAsync(CreateUpdateMaintenanceWindowDto input);
 
+    Task<MaintenanceWindowDto> UpdateMaintenanceAsync(Guid id, CreateUpdateMaintenanceWindowDto input);
+
     Task DeleteMaintenanceAsync(Guid id);
 }

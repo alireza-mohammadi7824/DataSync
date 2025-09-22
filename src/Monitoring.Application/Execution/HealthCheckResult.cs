@@ -14,11 +14,17 @@ public sealed record HealthCheckResult(
 
     public DateTime CompletedAt { get; init; }
 
+    public bool SuppressAlerts { get; init; }
+
+    public bool SuppressOutageProcessing { get; init; }
+
     public static HealthCheckResult CreateSkipped(string triggerSource, string reason, DateTime completedAt)
         => new(false, null, reason, triggerSource)
         {
             IsSkipped = true,
             SkipReason = reason,
-            CompletedAt = completedAt
+            CompletedAt = completedAt,
+            SuppressAlerts = true,
+            SuppressOutageProcessing = true
         };
 }
