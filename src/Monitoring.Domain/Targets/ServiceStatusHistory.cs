@@ -13,7 +13,7 @@ public class ServiceStatusHistory : Entity<Guid>
     public int? ResponseTimeMs { get; private set; }
     public string? ErrorSummary { get; private set; }
 
-    private ServiceStatusHistory()
+    public ServiceStatusHistory()
     {
     }
 

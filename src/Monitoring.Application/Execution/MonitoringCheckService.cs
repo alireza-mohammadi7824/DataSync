@@ -1,14 +1,8 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Monitoring.Alerts;
-using Monitoring.HealthChecks;
-using Monitoring.Options;
 using Monitoring.Targets;
 using Volo.Abp;
 using Volo.Abp.Domain.Repositories;
@@ -24,13 +18,12 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
     private readonly IRepository<MonitoringTarget, Guid> _targetRepository;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
-    private readonly IRepository<AlertPolicy, Guid> _alertPolicyRepository;
     private readonly IRepository<MaintenanceWindow, Guid> _maintenanceRepository;
-    private readonly INotificationChannelResolver _channelResolver;
+    private readonly AlertEvaluator _alertEvaluator;
+    private readonly AlertDispatcher _alertDispatcher;
     private readonly IClock _clock;
     private readonly IUnitOfWorkManager _unitOfWorkManager;
     private readonly IGuidGenerator _guidGenerator;
-    private readonly MonitoringOptions _options;
     private readonly ILogger<MonitoringCheckService> _logger;
 
     public MonitoringCheckService(
@@ -38,26 +31,24 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
         IRepository<MonitoringTarget, Guid> targetRepository,
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
-        IRepository<AlertPolicy, Guid> alertPolicyRepository,
         IRepository<MaintenanceWindow, Guid> maintenanceRepository,
-        INotificationChannelResolver channelResolver,
+        AlertEvaluator alertEvaluator,
+        AlertDispatcher alertDispatcher,
         IClock clock,
         IUnitOfWorkManager unitOfWorkManager,
         IGuidGenerator guidGenerator,
-        IOptions<MonitoringOptions> options,
         ILogger<MonitoringCheckService> logger)
     {
         _executor = executor;
         _targetRepository = targetRepository;
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
-        _alertPolicyRepository = alertPolicyRepository;
         _maintenanceRepository = maintenanceRepository;
-        _channelResolver = channelResolver;
+        _alertEvaluator = alertEvaluator;
+        _alertDispatcher = alertDispatcher;
         _clock = clock;
         _unitOfWorkManager = unitOfWorkManager;
         _guidGenerator = guidGenerator;
-        _options = options.Value;
         _logger = logger;
     }
 
@@ -67,179 +58,118 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
         bool dispatchAlerts,
         CancellationToken cancellationToken)
     {
-        var previousLastUpAt = target.LastUpAt;
-
-        var execution = await _executor.ExecuteAsync(target, triggerSource, cancellationToken);
-        if (execution.Skipped)
+        var executionResult = await _executor.ExecuteAsync(target, triggerSource, cancellationToken);
+        if (executionResult.IsSkipped)
         {
-            return CheckProcessingResult.Skipped(execution.SkipReason ?? "Skipped");
+            return CheckProcessingResult.Skipped(executionResult.SkipReason ?? "already-checking");
         }
+
+        var completedAt = executionResult.CompletedAt == default ? _clock.Now : executionResult.CompletedAt;
 
         using var uow = _unitOfWorkManager.Begin(requiresNew: true, isTransactional: false);
 
         var outcome = await MonitoringTargetCheckProcessor.ApplyResultAsync(
             target,
-            execution.Result,
-            execution.CompletedAt,
+            executionResult,
+            completedAt,
             _historyRepository,
             _outageRepository,
             _guidGenerator,
+            executionResult.SuppressOutageProcessing,
             cancellationToken);
 
         await _targetRepository.UpdateAsync(target, autoSave: true, cancellationToken: cancellationToken);
         await uow.CompleteAsync();
 
         var alertsDispatched = 0;
-        if (dispatchAlerts)
+        if (dispatchAlerts && !executionResult.SuppressAlerts)
         {
-            var dispatches = await EvaluateAlertsAsync(target, outcome, execution.Result, execution.CompletedAt, previousLastUpAt, cancellationToken);
-            if (dispatches.Count > 0)
-            {
-                alertsDispatched = dispatches.Count;
-                await DispatchAlertsAsync(dispatches, cancellationToken);
-            }
+            alertsDispatched = await ProcessAlertsAsync(target, outcome, executionResult, completedAt, cancellationToken);
         }
 
-        return CheckProcessingResult.Completed(execution.Result, execution.CompletedAt, alertsDispatched, outcome);
+        return CheckProcessingResult.Completed(executionResult, completedAt, alertsDispatched, outcome);
     }
 
-    private async Task<List<AlertDispatch>> EvaluateAlertsAsync(
+    private Task<MaintenanceState> GetMaintenanceStateAsync(Guid targetId, DateTime timestamp, CancellationToken cancellationToken)
+        => MaintenanceWindowHelper.GetStateAsync(_maintenanceRepository, targetId, timestamp, cancellationToken);
+
+    private async Task<int> ProcessAlertsAsync(
         MonitoringTarget target,
         MonitoringCheckOutcome outcome,
         HealthCheckResult result,
-        DateTime timestamp,
-        DateTime? previousLastUpAt,
+        DateTime completedAt,
         CancellationToken cancellationToken)
     {
-        var dispatches = new List<AlertDispatch>();
-
-        var policy = await _alertPolicyRepository.FirstOrDefaultAsync(x => x.TargetId == target.Id, cancellationToken: cancellationToken);
-        var defaults = _options.AlertDefaults;
-
-        var enabled = policy?.Enabled ?? defaults.Enabled;
-        if (!enabled)
+        if (outcome.PreviousStatus == outcome.CurrentStatus)
         {
-            return dispatches;
+            return 0;
         }
 
-        var notifyAfterFailures = policy?.NotifyAfterFailures ?? defaults.NotifyAfterFailures;
-        var repeatMinutes = policy?.RepeatMinutes ?? defaults.RepeatMinutes;
-        var recoverQuietMinutes = policy?.RecoverQuietMinutes ?? defaults.RecoverQuietMinutes;
-        var suppressDuringMaintenance = policy?.SuppressDuringMaintenance ?? defaults.SuppressDuringMaintenance;
-
-        var channels = ResolveChannels(policy?.ChannelsJson, target.Id);
-        if (channels.Count == 0)
+        var maintenanceState = await GetMaintenanceStateAsync(target.Id, completedAt, cancellationToken);
+        if (maintenanceState.ShouldSkip || maintenanceState.RecordButDontAlert)
         {
-            var fallback = _options.AlertDefaults.DefaultChannels ?? new Dictionary<string, string[]>();
-            channels = CloneChannels(fallback);
-            if (channels.Count == 0)
-            {
-                _logger.LogDebug(
-                    "No alert channels configured for target {TargetId}; alerts will be suppressed",
-                    target.Id);
-            }
+            _logger.LogInformation(
+                "Alert suppressed for target {TargetId} due to active maintenance window.",
+                target.Id);
+            return 0;
         }
 
-        if (channels.Count == 0)
-        {
-            return dispatches;
-        }
+        var outage = outcome.CurrentStatus == ServiceStatus.Offline
+            ? outcome.ActiveOutage
+            : outcome.ClosedOutage;
 
-        var underMaintenance = suppressDuringMaintenance && await HasActiveMaintenanceAsync(target.Id, timestamp, cancellationToken);
-
-        var evaluation = AlertEvaluator.Evaluate(new AlertEvaluationInput(
+        var history = new ServiceStatusHistory(
+            Guid.Empty,
+            target.Id,
             outcome.PreviousStatus,
             outcome.CurrentStatus,
-            target.ConsecutiveFailures,
-            timestamp,
-            notifyAfterFailures,
-            repeatMinutes,
-            recoverQuietMinutes,
-            enabled,
-            underMaintenance,
-            outcome.ActiveOutage,
-            outcome.ClosedOutage,
-            previousLastUpAt));
+            completedAt,
+            result.TriggerSource,
+            result.ResponseTimeMs,
+            result.ErrorSummary);
 
-        if (!evaluation.ShouldAlert)
+        var evaluation = await _alertEvaluator.EvaluateTransitionAsync(
+            target,
+            history,
+            outage,
+            completedAt,
+            cancellationToken);
+
+        if (!evaluation.ShouldAlert || string.IsNullOrWhiteSpace(evaluation.EventType) || evaluation.Policies.Count == 0)
         {
-            return dispatches;
+            return 0;
+        }
+
+        var startedAt = outage?.StartedAt ?? completedAt;
+        var endedAt = outage?.EndedAt;
+        if (outcome.CurrentStatus == ServiceStatus.Online && endedAt == null)
+        {
+            endedAt = completedAt;
+        }
+
+        TimeSpan? duration = null;
+        if (outage != null)
+        {
+            var end = endedAt ?? completedAt;
+            var span = end - outage.StartedAt;
+            if (span < TimeSpan.Zero)
+            {
+                span = TimeSpan.Zero;
+            }
+
+            duration = span;
         }
 
         var payload = new AlertPayload(
-            evaluation.EventType,
-            timestamp,
+            target.Id,
             target.Name,
-            target.Type.ToString(),
-            target.Endpoint,
-            result.ErrorSummary,
-            result.ResponseTimeMs,
-            evaluation.CurrentOutage);
+            outcome.CurrentStatus.ToString(),
+            startedAt,
+            endedAt,
+            duration,
+            evaluation.EventType!,
+            evaluation.Summary);
 
-        dispatches.AddRange(AlertDispatch.Create(target.Id, payload, channels));
-        return dispatches;
-    }
-
-    private async Task DispatchAlertsAsync(List<AlertDispatch> dispatches, CancellationToken cancellationToken)
-    {
-        foreach (var dispatch in dispatches)
-        {
-            try
-            {
-                var channel = _channelResolver.Resolve(dispatch.Channel);
-                await channel.SendAsync(dispatch.TargetSnapshot, dispatch.Payload, cancellationToken);
-                _logger.LogInformation(
-                    "Alert sent for target {TargetId} via {Channel} for event {EventType}",
-                    dispatch.TargetSnapshot.Id,
-                    dispatch.Channel,
-                    dispatch.Payload.EventType);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex,
-                    "Failed to send alert for target {TargetId} via {Channel}",
-                    dispatch.TargetSnapshot.Id,
-                    dispatch.Channel);
-            }
-        }
-    }
-
-    private async Task<bool> HasActiveMaintenanceAsync(Guid targetId, DateTime timestamp, CancellationToken cancellationToken)
-    {
-        return await _maintenanceRepository.AnyAsync(
-            window => window.StartUtc <= timestamp && window.EndUtc >= timestamp &&
-                      (window.TargetId == null || window.TargetId == targetId),
-            cancellationToken);
-    }
-
-    private static Dictionary<string, string[]> CloneChannels(Dictionary<string, string[]> source)
-    {
-        return source.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
-    }
-
-    private Dictionary<string, string[]> ResolveChannels(string? json, Guid targetId)
-    {
-        if (json.IsNullOrWhiteSpace())
-        {
-            return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-        }
-
-        try
-        {
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, string[]>>(json!);
-            if (parsed == null)
-            {
-                return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-            }
-
-            return CloneChannels(parsed);
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogWarning(ex,
-                "Failed to parse alert channels configuration for target {TargetId}",
-                targetId);
-            return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-        }
+        return await _alertDispatcher.DispatchAsync(target, evaluation, payload, cancellationToken);
     }
 }

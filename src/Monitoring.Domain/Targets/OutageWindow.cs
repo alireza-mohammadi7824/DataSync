@@ -13,7 +13,7 @@ public class OutageWindow : Entity<Guid>
     public DateTime? LastAlertAt { get; private set; }
     public int AlertsSent { get; private set; }
 
-    private OutageWindow()
+    public OutageWindow()
     {
     }
 

@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Monitoring.HealthChecks;
+using Monitoring.Execution;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Guids;
@@ -21,6 +21,7 @@ internal static class MonitoringTargetCheckProcessor
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
         IGuidGenerator guidGenerator,
+        bool suppressOutageProcessing,
         CancellationToken cancellationToken = default)
     {
         var previousStatus = target.CurrentStatus;
@@ -82,14 +83,16 @@ internal static class MonitoringTargetCheckProcessor
             await historyRepository.InsertAsync(history, autoSave: true, cancellationToken);
         }
 
-        var outageTransition = await ManageOutageWindowAsync(
-            target,
-            previousStatus,
-            newStatus,
-            timestamp,
-            outageRepository,
-            guidGenerator,
-            cancellationToken);
+        var outageTransition = suppressOutageProcessing
+            ? OutageTransitionResult.Empty
+            : await ManageOutageWindowAsync(
+                target,
+                previousStatus,
+                newStatus,
+                timestamp,
+                outageRepository,
+                guidGenerator,
+                cancellationToken);
 
         return new MonitoringCheckOutcome(
             previousStatus,
@@ -183,7 +186,7 @@ internal static class MonitoringTargetCheckProcessor
     }
 }
 
-internal sealed class MonitoringCheckOutcome
+public sealed class MonitoringCheckOutcome
 {
     public MonitoringCheckOutcome(
         ServiceStatus previousStatus,
@@ -227,4 +230,6 @@ internal sealed class OutageTransitionResult
     public OutageWindow? ClosedOutage { get; }
     public bool OutageStarted { get; }
     public bool OutageClosed { get; }
+
+    public static OutageTransitionResult Empty { get; } = new(null, null, false, false);
 }

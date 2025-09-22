@@ -1,20 +1,25 @@
+using System;
 using System.Collections.Generic;
 
 namespace Monitoring.Alerts;
 
-internal sealed class AlertDispatch
+public sealed record AlertDispatch(
+    string Channel,
+    string TargetSnapshot,
+    string Payload,
+    IReadOnlyList<string> Recipients,
+    string? Destination,
+    string Summary)
 {
-    public AlertDispatch(
-        TargetSnapshot target,
-        AlertPayload payload,
-        IReadOnlyList<NotificationChannelDescriptor> channels)
-    {
-        Target = target;
-        Payload = payload;
-        Channels = channels;
-    }
+    public static AlertDispatch Create(string channel, string targetSnapshot, string payload)
+        => new(channel, targetSnapshot, payload, Array.Empty<string>(), null, targetSnapshot);
 
-    public TargetSnapshot Target { get; }
-    public AlertPayload Payload { get; }
-    public IReadOnlyList<NotificationChannelDescriptor> Channels { get; }
+    public static AlertDispatch Create(
+        string channel,
+        string targetSnapshot,
+        string payload,
+        IReadOnlyList<string> recipients,
+        string? destination,
+        string summary)
+        => new(channel, targetSnapshot, payload, recipients, destination, summary);
 }

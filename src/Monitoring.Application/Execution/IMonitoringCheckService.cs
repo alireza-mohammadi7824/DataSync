@@ -1,7 +1,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Monitoring.HealthChecks;
 using Monitoring.Targets;
 
 namespace Monitoring.Execution;

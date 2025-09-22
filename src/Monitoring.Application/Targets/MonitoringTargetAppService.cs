@@ -1,15 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Monitoring.Execution;
-using Monitoring.HealthChecks;
-using Monitoring.Options;
+using Monitoring.Endpoints;
 using Monitoring.Permissions;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
@@ -18,6 +15,7 @@ using Volo.Abp.Authorization;
 using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Guids;
+using Volo.Abp.Threading;
 
 namespace Monitoring.Targets;
 
@@ -31,46 +29,36 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         PropertyNameCaseInsensitive = true
     };
 
-    private static readonly JsonSerializerOptions AlertChannelsSerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DictionaryKeyPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
-    };
-
     private readonly IRepository<MonitoringTarget, Guid> _repository;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
-    private readonly IRepository<AlertPolicy, Guid> _alertPolicyRepository;
     private readonly IRepository<MaintenanceWindow, Guid> _maintenanceRepository;
     private readonly IGuidGenerator _guidGenerator;
-    private readonly MonitoringOptions _options;
     private readonly IMonitoringCheckService _checkService;
     private readonly IBulkCheckQueue _bulkCheckQueue;
     private readonly ExecutionMetrics _metrics;
+    private readonly ICancellationTokenProvider _cancellationTokenProvider;
 
     public MonitoringTargetAppService(
         IRepository<MonitoringTarget, Guid> repository,
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
-        IRepository<AlertPolicy, Guid> alertPolicyRepository,
         IRepository<MaintenanceWindow, Guid> maintenanceRepository,
         IGuidGenerator guidGenerator,
-        IOptions<MonitoringOptions> options,
         IMonitoringCheckService checkService,
         IBulkCheckQueue bulkCheckQueue,
-        ExecutionMetrics metrics)
+        ExecutionMetrics metrics,
+        ICancellationTokenProvider cancellationTokenProvider)
     {
         _repository = repository;
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
-        _alertPolicyRepository = alertPolicyRepository;
         _maintenanceRepository = maintenanceRepository;
         _guidGenerator = guidGenerator;
-        _options = options.Value;
         _checkService = checkService;
         _bulkCheckQueue = bulkCheckQueue;
         _metrics = metrics;
+        _cancellationTokenProvider = cancellationTokenProvider;
     }
 
     public async Task<PagedResultDto<MonitoringTargetDto>> GetListAsync(
@@ -218,7 +206,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
         var target = await _repository.GetAsync(id);
-        var execution = await _checkService.RunAsync(target, "manual-trigger", true, CancellationTokenProvider.Token);
+        var execution = await _checkService.RunAsync(target, "manual-trigger", true, _cancellationTokenProvider.Token);
 
         if (execution.IsSkipped)
         {
@@ -231,7 +219,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Run);
 
         var target = await _repository.GetAsync(id);
-        var execution = await _checkService.RunAsync(target, "manual", true, CancellationTokenProvider.Token);
+        var execution = await _checkService.RunAsync(target, "manual", true, _cancellationTokenProvider.Token);
 
         if (execution.IsSkipped)
         {
@@ -250,14 +238,13 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
             queryable
                 .Where(target => target.IsActive)
                 .Select(target => target.Id),
-            CancellationTokenProvider.Token);
+            _cancellationTokenProvider.Token);
 
-        var enqueueResult = await _bulkCheckQueue.EnqueueAsync(ids, CancellationTokenProvider.Token);
+        var batchId = _bulkCheckQueue.Enqueue(ids);
 
         return new CheckBatchEnqueueResultDto
         {
-            BatchId = enqueueResult.BatchId,
-            TotalTargets = enqueueResult.TotalQueued
+            BatchId = batchId
         };
     }
 
@@ -273,9 +260,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
             Queued = status.Queued,
             Running = status.Running,
             Completed = status.Completed,
-            Succeeded = status.Succeeded,
-            Failed = status.Failed,
-            Skipped = status.Skipped
+            Failed = status.Failed
         };
     }
 
@@ -373,90 +358,6 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         return ObjectMapper.Map<List<ServiceStatusHistory>, List<ServiceStatusHistoryDto>>(history);
     }
 
-    public async Task<AlertPolicyDto> GetAlertPolicyAsync(Guid targetId)
-    {
-        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
-
-        await EnsureTargetExistsAsync(targetId);
-
-        var policy = await _alertPolicyRepository.FirstOrDefaultAsync(x => x.TargetId == targetId);
-        if (policy == null)
-        {
-            var defaults = _options.AlertDefaults;
-            return new AlertPolicyDto
-            {
-                TargetId = targetId,
-                Enabled = defaults.Enabled,
-                NotifyAfterFailures = defaults.NotifyAfterFailures,
-                RepeatMinutes = defaults.RepeatMinutes,
-                RecoverQuietMinutes = defaults.RecoverQuietMinutes,
-                ChannelsJson = SerializeDefaultChannels(defaults.DefaultChannels),
-                SuppressDuringMaintenance = defaults.SuppressDuringMaintenance,
-                IsInherited = true
-            };
-        }
-
-        var dto = ObjectMapper.Map<AlertPolicy, AlertPolicyDto>(policy);
-        dto.IsInherited = false;
-        return dto;
-    }
-
-    public async Task<AlertPolicyDto> UpsertAlertPolicyAsync(Guid targetId, AlertPolicyDto input)
-    {
-        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Edit);
-
-        if (input == null)
-        {
-            throw new ArgumentNullException(nameof(input));
-        }
-
-        await EnsureTargetExistsAsync(targetId);
-
-        if (input.TargetId != Guid.Empty && input.TargetId != targetId)
-        {
-            throw new UserFriendlyException("TargetId mismatch.");
-        }
-
-        input.TargetId = targetId;
-
-        ValidateAlertPolicyInput(input);
-
-        var normalizedChannels = NormalizeChannelsJson(input.ChannelsJson);
-
-        var existing = await _alertPolicyRepository.FirstOrDefaultAsync(x => x.TargetId == targetId);
-        if (existing == null)
-        {
-            existing = new AlertPolicy(
-                _guidGenerator.Create(),
-                targetId,
-                input.Enabled,
-                input.NotifyAfterFailures,
-                input.RepeatMinutes,
-                input.RecoverQuietMinutes,
-                normalizedChannels,
-                input.SuppressDuringMaintenance);
-
-            await _alertPolicyRepository.InsertAsync(existing, autoSave: true);
-        }
-        else
-        {
-            existing.Update(
-                input.Enabled,
-                input.NotifyAfterFailures,
-                input.RepeatMinutes,
-                input.RecoverQuietMinutes,
-                normalizedChannels,
-                input.SuppressDuringMaintenance);
-
-            await _alertPolicyRepository.UpdateAsync(existing, autoSave: true);
-        }
-
-        var dto = ObjectMapper.Map<AlertPolicy, AlertPolicyDto>(existing);
-        dto.TargetId = targetId;
-        dto.IsInherited = false;
-        return dto;
-    }
-
     public async Task<List<MaintenanceWindowDto>> GetMaintenanceAsync(Guid? targetId = null)
     {
         await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
@@ -487,20 +388,50 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
         ValidateMaintenanceWindow(input);
 
-        if (input.TargetId.HasValue)
+        var targetId = input.IsGlobal ? (Guid?)null : input.TargetId;
+
+        if (targetId.HasValue)
         {
-            await EnsureTargetExistsAsync(input.TargetId.Value);
+            await EnsureTargetExistsAsync(targetId.Value);
         }
 
         var entity = new MaintenanceWindow(
             _guidGenerator.Create(),
-            input.TargetId,
+            targetId,
             input.StartUtc,
             input.EndUtc,
-            input.Reason);
+            input.Reason,
+            input.RecordButDontAlert,
+            Clock.Now);
 
         var created = await _maintenanceRepository.InsertAsync(entity, autoSave: true);
         return ObjectMapper.Map<MaintenanceWindow, MaintenanceWindowDto>(created);
+    }
+
+    public async Task<MaintenanceWindowDto> UpdateMaintenanceAsync(Guid id, CreateUpdateMaintenanceWindowDto input)
+    {
+        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.Edit);
+
+        if (input == null)
+        {
+            throw new ArgumentNullException(nameof(input));
+        }
+
+        ValidateMaintenanceWindow(input);
+
+        var entity = await _maintenanceRepository.GetAsync(id);
+
+        var targetId = input.IsGlobal ? (Guid?)null : input.TargetId;
+        if (targetId.HasValue)
+        {
+            await EnsureTargetExistsAsync(targetId.Value);
+        }
+
+        entity.Update(targetId, input.StartUtc, input.EndUtc, input.Reason, input.RecordButDontAlert);
+
+        await _maintenanceRepository.UpdateAsync(entity, autoSave: true);
+
+        return ObjectMapper.Map<MaintenanceWindow, MaintenanceWindowDto>(entity);
     }
 
     public async Task DeleteMaintenanceAsync(Guid id)
@@ -571,41 +502,6 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         ValidateEndpointAndSettings(input);
     }
 
-    private void ValidateAlertPolicyInput(AlertPolicyDto input)
-    {
-        if (input.NotifyAfterFailures < 1)
-        {
-            throw new UserFriendlyException("NotifyAfterFailures must be at least 1.");
-        }
-
-        if (input.RepeatMinutes < 1)
-        {
-            throw new UserFriendlyException("RepeatMinutes must be at least 1.");
-        }
-
-        if (input.RecoverQuietMinutes < 0)
-        {
-            throw new UserFriendlyException("RecoverQuietMinutes cannot be negative.");
-        }
-
-        if (!input.ChannelsJson.IsNullOrWhiteSpace())
-        {
-            if (input.ChannelsJson!.Length > AlertPolicyConsts.ChannelsJsonMaxLength)
-            {
-                throw new UserFriendlyException($"ChannelsJson cannot exceed {AlertPolicyConsts.ChannelsJsonMaxLength} characters.");
-            }
-
-            try
-            {
-                JsonDocument.Parse(input.ChannelsJson);
-            }
-            catch (JsonException)
-            {
-                throw new UserFriendlyException("ChannelsJson must be valid JSON.");
-            }
-        }
-    }
-
     private void ValidateMaintenanceWindow(CreateUpdateMaintenanceWindowDto input)
     {
         if (input.StartUtc == default)
@@ -623,45 +519,15 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
             throw new UserFriendlyException("EndUtc must be greater than StartUtc.");
         }
 
+        if (!input.IsGlobal && !input.TargetId.HasValue)
+        {
+            throw new UserFriendlyException("TargetId is required for non-global maintenance windows.");
+        }
+
         if (!input.Reason.IsNullOrWhiteSpace() && input.Reason!.Length > MaintenanceWindowConsts.ReasonMaxLength)
         {
             throw new UserFriendlyException($"Reason cannot exceed {MaintenanceWindowConsts.ReasonMaxLength} characters.");
         }
-    }
-
-    private string? NormalizeChannelsJson(string? channelsJson)
-    {
-        if (channelsJson.IsNullOrWhiteSpace())
-        {
-            return null;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(channelsJson);
-            var normalized = JsonSerializer.Serialize(document.RootElement, AlertChannelsSerializerOptions);
-
-            if (normalized.Length > AlertPolicyConsts.ChannelsJsonMaxLength)
-            {
-                throw new UserFriendlyException($"ChannelsJson cannot exceed {AlertPolicyConsts.ChannelsJsonMaxLength} characters.");
-            }
-
-            return normalized;
-        }
-        catch (JsonException)
-        {
-            throw new UserFriendlyException("ChannelsJson must be valid JSON.");
-        }
-    }
-
-    private string? SerializeDefaultChannels(Dictionary<string, string[]>? channels)
-    {
-        if (channels == null || channels.Count == 0)
-        {
-            return null;
-        }
-
-        return JsonSerializer.Serialize(channels, AlertChannelsSerializerOptions);
     }
 
     private async Task<MonitoringTarget> EnsureTargetExistsAsync(Guid targetId)
@@ -680,11 +546,11 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         switch (input.Type)
         {
             case ServiceType.Website:
-                EnsureValidHttpEndpoint(input.Endpoint);
+                EnsureEndpointValid(input.Endpoint, EndpointType.Website, "Endpoint must be an absolute HTTP or HTTPS URL.");
                 DeserializeSettings<WebsiteSettings>(input.SettingsJson, "Website settings");
                 break;
             case ServiceType.Api:
-                EnsureValidHttpEndpoint(input.Endpoint);
+                EnsureEndpointValid(input.Endpoint, EndpointType.Api, "Endpoint must be an absolute HTTP or HTTPS URL.");
                 DeserializeSettings<ApiSettings>(input.SettingsJson, "API settings");
                 break;
             case ServiceType.Tcp:
@@ -700,7 +566,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
     private void ValidateTcpConfiguration(string endpoint, string? settingsJson)
     {
-        if (EndpointParser.TryParseHostPort(endpoint, out _, out _))
+        if (EndpointParser.TryParse(endpoint, EndpointType.Tcp, out _, out _))
         {
             DeserializeSettings<TcpSettings>(settingsJson, "TCP settings");
             return;
@@ -715,14 +581,14 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
     private void ValidateRedisConfiguration(string endpoint, string? settingsJson)
     {
-        var endpointValid = EndpointParser.TryParseHostPort(endpoint, out _, out _);
+        var endpointValid = EndpointParser.TryParse(endpoint, EndpointType.Redis, out _, out _);
         var settings = DeserializeSettings<RedisSettings>(settingsJson, "Redis settings");
 
         if (settings.Endpoints is { Length: > 0 })
         {
             foreach (var candidate in settings.Endpoints)
             {
-                if (!EndpointParser.TryParseHostPort(candidate, out _, out _))
+                if (!EndpointParser.TryParse(candidate, EndpointType.Redis, out _, out _))
                 {
                     throw new UserFriendlyException("Redis endpoints must be expressed as host:port values.");
                 }
@@ -739,7 +605,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
             foreach (var sentinel in settings.Sentinels)
             {
-                if (!EndpointParser.TryParseHostPort(sentinel, out _, out _))
+                if (!EndpointParser.TryParse(sentinel, EndpointType.Redis, out _, out _))
                 {
                     throw new UserFriendlyException("Sentinel endpoints must be valid host:port values.");
                 }
@@ -753,7 +619,7 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
 
         if (!endpointValid)
         {
-            var hasEndpoint = settings.Endpoints != null && settings.Endpoints.Any(e => EndpointParser.TryParseHostPort(e, out _, out _));
+            var hasEndpoint = settings.Endpoints != null && settings.Endpoints.Any(e => EndpointParser.TryParse(e, EndpointType.Redis, out _, out _));
             if (!hasEndpoint)
             {
                 throw new UserFriendlyException("Provide at least one valid Redis endpoint.");
@@ -761,12 +627,11 @@ public class MonitoringTargetAppService : ApplicationService, IMonitoringTargetA
         }
     }
 
-    private static void EnsureValidHttpEndpoint(string endpoint)
+    private static void EnsureEndpointValid(string endpoint, EndpointType type, string errorMessage)
     {
-        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        if (!EndpointParser.TryParse(endpoint, type, out _, out _))
         {
-            throw new UserFriendlyException("Endpoint must be an absolute HTTP or HTTPS URL.");
+            throw new UserFriendlyException(errorMessage);
         }
     }
 

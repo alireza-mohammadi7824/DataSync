@@ -34,13 +34,11 @@ public interface IMonitoringTargetAppService : IApplicationService
 
     Task<List<ServiceStatusHistoryDto>> GetRecentStatusHistoryAsync(Guid targetId, int count = 20);
 
-    Task<AlertPolicyDto> GetAlertPolicyAsync(Guid targetId);
-
-    Task<AlertPolicyDto> UpsertAlertPolicyAsync(Guid targetId, AlertPolicyDto input);
-
     Task<List<MaintenanceWindowDto>> GetMaintenanceAsync(Guid? targetId = null);
 
     Task<MaintenanceWindowDto> CreateMaintenanceAsync(CreateUpdateMaintenanceWindowDto input);
+
+    Task<MaintenanceWindowDto> UpdateMaintenanceAsync(Guid id, CreateUpdateMaintenanceWindowDto input);
 
     Task DeleteMaintenanceAsync(Guid id);
 }

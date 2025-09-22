@@ -1,5 +1,7 @@
 using System;
+using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -22,39 +24,74 @@ public class MonitoringExportController : MonitoringController
     }
 
     [HttpGet("uptime/{id}.csv")]
-    public async Task<FileContentResult> ExportUptimeAsync(Guid id, [FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] string bucket = "day")
+    public async Task<IActionResult> ExportUptimeAsync(Guid id, CancellationToken cancellationToken)
     {
-        var series = await _dashboardAppService.GetUptimeSeriesAsync(id, from ?? default, to ?? default, bucket);
-        var builder = new StringBuilder();
-        builder.AppendLine("start,end,uptimePercentage");
-        foreach (var item in series)
+        var target = await FindTargetAsync(id, cancellationToken);
+        if (target == null)
         {
-            builder.AppendLine(string.Join(',',
-                Escape(item.Start.ToString("O")),
-                Escape(item.End.ToString("O")),
-                Escape(item.UptimePercentage.ToString("0.##"))));
+            return NotFound();
         }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("window,uptimePercentage");
+        builder.AppendLine(string.Join(',', "24h", Escape(target.Uptime24h.ToString("0.##"))));
+        builder.AppendLine(string.Join(',', "7d", Escape(target.Uptime7d.ToString("0.##"))));
+        builder.AppendLine(string.Join(',', "30d", Escape(target.Uptime30d.ToString("0.##"))));
 
         return File(Encoding.UTF8.GetBytes(builder.ToString()), "text/csv", $"uptime-{id}.csv");
     }
 
-    [HttpGet("incidents/{id}.csv")]
-    public async Task<FileContentResult> ExportIncidentsAsync(Guid id, [FromQuery] DateTime? from, [FromQuery] DateTime? to)
+    [HttpGet("summary.csv")]
+    public async Task<FileContentResult> ExportSummaryAsync(CancellationToken cancellationToken)
     {
-        var incidents = await _dashboardAppService.GetIncidentsAsync(id, from ?? default, to ?? default, 0, 10_000);
+        var summary = await _dashboardAppService.GetSummaryAsync(cancellationToken);
         var builder = new StringBuilder();
-        builder.AppendLine("id,start,end,durationSeconds,failureCount");
-        foreach (var incident in incidents)
-        {
-            builder.AppendLine(string.Join(',',
-                Escape(incident.Id.ToString()),
-                Escape(incident.StartedAt.ToString("O")),
-                Escape(incident.EndedAt?.ToString("O") ?? string.Empty),
-                Escape((incident.TotalDurationSec ?? 0).ToString()),
-                Escape(incident.FailureCount.ToString())));
-        }
+        builder.AppendLine("metric,value");
+        builder.AppendLine(string.Join(',', "uptime24h", Escape(summary.Uptime24h.ToString("0.##"))));
+        builder.AppendLine(string.Join(',', "uptime7d", Escape(summary.Uptime7d.ToString("0.##"))));
+        builder.AppendLine(string.Join(',', "uptime30d", Escape(summary.Uptime30d.ToString("0.##"))));
+        builder.AppendLine(string.Join(',', "mttr30d", Escape(summary.Mttr30d.ToString("0.##"))));
+        builder.AppendLine(string.Join(',', "mtbf30d", Escape(summary.Mtbf30d.ToString("0.##"))));
+        builder.AppendLine(string.Join(',', "online", summary.OnlineCount.ToString()));
+        builder.AppendLine(string.Join(',', "offline", summary.OfflineCount.ToString()));
+        builder.AppendLine(string.Join(',', "checking", summary.CheckingCount.ToString()));
 
-        return File(Encoding.UTF8.GetBytes(builder.ToString()), "text/csv", $"incidents-{id}.csv");
+        return File(Encoding.UTF8.GetBytes(builder.ToString()), "text/csv", "dashboard-summary.csv");
+    }
+
+    private async Task<TargetDashboardItemDto?> FindTargetAsync(Guid id, CancellationToken cancellationToken)
+    {
+        const int pageSize = 200;
+        var skip = 0;
+
+        while (true)
+        {
+            var result = await _dashboardAppService.GetTargetsAsync(
+                new TargetDashboardListInput
+                {
+                    SkipCount = skip,
+                    MaxResultCount = pageSize,
+                    Sorting = "name"
+                },
+                cancellationToken);
+
+            if (result.Items == null || result.Items.Count == 0)
+            {
+                return null;
+            }
+
+            var match = result.Items.FirstOrDefault(item => item.Id == id);
+            if (match != null)
+            {
+                return match;
+            }
+
+            skip += pageSize;
+            if (skip >= result.TotalCount)
+            {
+                return null;
+            }
+        }
     }
 
     private static string Escape(string value)

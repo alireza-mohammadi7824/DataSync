@@ -4,9 +4,11 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Monitoring.Execution;
+using Monitoring.Permissions;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
-using Monitoring.Permissions;
+using Volo.Abp.Http.Modeling;
 
 namespace Monitoring.Targets;
 
@@ -52,22 +54,6 @@ public class MonitoringTargetController : MonitoringController
     public virtual Task<List<OutageWindowDto>> GetRecentOutagesAsync(Guid id, [FromQuery] int count = 10)
     {
         return _monitoringTargetAppService.GetRecentOutagesAsync(id, count);
-    }
-
-    [HttpGet]
-    [Route("{id}/alert-policy")]
-    public virtual Task<AlertPolicyDto> GetAlertPolicyAsync(Guid id)
-    {
-        return _monitoringTargetAppService.GetAlertPolicyAsync(id);
-    }
-
-    [HttpPut]
-    [Route("{id}/alert-policy")]
-    [Authorize(MonitoringPermissions.Services.Edit)]
-    [EnableRateLimiting("monitoring-write")]
-    public virtual Task<AlertPolicyDto> UpsertAlertPolicyAsync(Guid id, AlertPolicyDto input)
-    {
-        return _monitoringTargetAppService.UpsertAlertPolicyAsync(id, input);
     }
 
     [HttpGet]
@@ -144,7 +130,7 @@ public class MonitoringTargetController : MonitoringController
     public virtual async Task<IActionResult> EnqueueCheckAllAsync()
     {
         var result = await _monitoringTargetAppService.EnqueueCheckAllAsync();
-        return AcceptedAtAction(nameof(GetCheckBatchStatusAsync), new { id = result.BatchId }, result);
+        return Accepted(new { batchId = result.BatchId });
     }
 
     [HttpGet]

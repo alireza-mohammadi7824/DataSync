@@ -37,6 +37,15 @@ public class MonitoringMaintenanceController : MonitoringController
         return _appService.CreateMaintenanceAsync(input);
     }
 
+    [HttpPut]
+    [Route("{id}")]
+    [Authorize(MonitoringPermissions.Services.Edit)]
+    [EnableRateLimiting("monitoring-write")]
+    public virtual Task<MaintenanceWindowDto> UpdateAsync(Guid id, CreateUpdateMaintenanceWindowDto input)
+    {
+        return _appService.UpdateMaintenanceAsync(id, input);
+    }
+
     [HttpDelete]
     [Route("{id}")]
     [Authorize(MonitoringPermissions.Services.Edit)]

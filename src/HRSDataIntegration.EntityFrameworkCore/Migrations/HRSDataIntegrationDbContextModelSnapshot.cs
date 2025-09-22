@@ -116,18 +116,13 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
             b.ToTable("MonitoringTargets", (string)null);
         });
 
-        modelBuilder.Entity("Monitoring.Targets.AlertPolicy", b =>
+        modelBuilder.Entity("Monitoring.Alerts.AlertPolicy", b =>
         {
             b.Property<Guid>("Id")
                 .HasColumnType("uniqueidentifier");
 
-            b.Property<string>("ChannelsJson")
-                .HasMaxLength(4000)
-                .HasColumnType("nvarchar(4000)");
-
-            b.Property<string>("ConcurrencyStamp")
-                .HasColumnType("nvarchar(40)")
-                .HasMaxLength(40);
+            b.Property<int>("CooldownSeconds")
+                .HasColumnType("int");
 
             b.Property<DateTime>("CreationTime")
                 .HasColumnType("datetime2");
@@ -135,47 +130,29 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
             b.Property<Guid?>("CreatorId")
                 .HasColumnType("uniqueidentifier");
 
-            b.Property<Guid?>("DeleterId")
-                .HasColumnType("uniqueidentifier");
+            b.Property<string>("Emails")
+                .HasMaxLength(1024)
+                .HasColumnType("nvarchar(1024)");
 
-            b.Property<DateTime?>("DeletionTime")
-                .HasColumnType("datetime2");
+            b.Property<int>("MinDownDurationSeconds")
+                .HasColumnType("int");
 
-            b.Property<bool>("Enabled")
+            b.Property<bool>("OnDown")
                 .HasColumnType("bit");
 
-            b.Property<string>("ExtraProperties")
-                .HasColumnType("nvarchar(max)");
-
-            b.Property<bool>("IsDeleted")
-                .HasColumnType("bit")
-                .HasDefaultValue(false);
-
-            b.Property<DateTime?>("LastModificationTime")
-                .HasColumnType("datetime2");
-
-            b.Property<Guid?>("LastModifierId")
-                .HasColumnType("uniqueidentifier");
-
-            b.Property<int>("NotifyAfterFailures")
-                .HasColumnType("int");
-
-            b.Property<int>("RecoverQuietMinutes")
-                .HasColumnType("int");
-
-            b.Property<int>("RepeatMinutes")
-                .HasColumnType("int");
-
-            b.Property<bool>("SuppressDuringMaintenance")
+            b.Property<bool>("OnUp")
                 .HasColumnType("bit");
 
-            b.Property<Guid>("TargetId")
+            b.Property<Guid?>("TargetId")
                 .HasColumnType("uniqueidentifier");
+
+            b.Property<string>("WebhookUrl")
+                .HasMaxLength(1024)
+                .HasColumnType("nvarchar(1024)");
 
             b.HasKey("Id");
 
-            b.HasIndex("TargetId")
-                .IsUnique();
+            b.HasIndex("TargetId");
 
             b.ToTable("MonitoringAlertPolicies", (string)null);
         });
@@ -348,13 +325,12 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
                 .IsRequired();
         });
 
-        modelBuilder.Entity("Monitoring.Targets.AlertPolicy", b =>
+        modelBuilder.Entity("Monitoring.Alerts.AlertPolicy", b =>
         {
             b.HasOne("Monitoring.Targets.MonitoringTarget", null)
-                .WithOne()
-                .HasForeignKey("Monitoring.Targets.AlertPolicy", "TargetId")
-                .OnDelete(DeleteBehavior.Cascade)
-                .IsRequired();
+                .WithMany()
+                .HasForeignKey("TargetId")
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity("Monitoring.Targets.MaintenanceWindow", b =>

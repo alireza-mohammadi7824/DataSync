@@ -4,31 +4,36 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Monitoring.HealthChecks;
+using Monitoring.Endpoints;
 using Monitoring.Options;
 using Monitoring.Targets;
+using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Timing;
 
 namespace Monitoring.Execution;
 
 public sealed class HealthCheckExecutor
 {
-    private const int DefaultTimeoutSeconds = 5;
-    private const int BackoffCapSeconds = 30;
+    private const int DefaultTimeoutSeconds = 15;
+    private const int TimeoutBufferSeconds = 3;
+    private const int BackoffBaseMilliseconds = 500;
+    private const int BackoffCapMilliseconds = 30_000;
 
-    private readonly IHealthCheckProviderResolver _providerResolver;
+    private readonly HealthCheckProviderResolver _providerResolver;
     private readonly ITargetRunLock _runLock;
     private readonly IClock _clock;
     private readonly MonitoringOptions _options;
     private readonly ExecutionMetrics _metrics;
+    private readonly IReadOnlyRepository<MaintenanceWindow, Guid> _maintenanceRepository;
     private readonly ILogger<HealthCheckExecutor> _logger;
 
     public HealthCheckExecutor(
-        IHealthCheckProviderResolver providerResolver,
+        HealthCheckProviderResolver providerResolver,
         ITargetRunLock runLock,
         IClock clock,
         IOptions<MonitoringOptions> options,
         ExecutionMetrics metrics,
+        IReadOnlyRepository<MaintenanceWindow, Guid> maintenanceRepository,
         ILogger<HealthCheckExecutor> logger)
     {
         _providerResolver = providerResolver;
@@ -36,126 +41,201 @@ public sealed class HealthCheckExecutor
         _clock = clock;
         _options = options.Value;
         _metrics = metrics;
+        _maintenanceRepository = maintenanceRepository;
         _logger = logger;
     }
 
-    public async Task<HealthCheckExecutionResult> ExecuteAsync(
+    public async Task<HealthCheckResult> ExecuteAsync(
         MonitoringTarget target,
         string triggerSource,
         CancellationToken cancellationToken)
     {
         var timeoutSeconds = ResolveTimeoutSeconds(target);
-        var skipWindow = TimeSpan.FromSeconds(timeoutSeconds + Math.Max(5, _options.Execution.LockTtlBufferSeconds));
-        var ttlSeconds = (timeoutSeconds * 2) + Math.Max(0, _options.Execution.LockTtlBufferSeconds);
-        var ttl = TimeSpan.FromSeconds(ttlSeconds);
+        var attemptTimeout = TimeSpan.FromSeconds(timeoutSeconds + TimeoutBufferSeconds);
+        var lockBuffer = Math.Max(1, _options.Execution.LockTtlBufferSeconds);
+        var lockTtl = TimeSpan.FromSeconds((timeoutSeconds * 2) + lockBuffer);
 
-        await using var handle = await _runLock.TryAcquireAsync(target.Id, ttl, cancellationToken);
-        if (handle == null)
+        var lockHandle = await _runLock.TryAcquireAsync(target.Id, lockTtl, cancellationToken);
+        if (lockHandle == null)
         {
-            _metrics.IncrementChecksSkipped();
-            _logger.LogInformation(
-                "Skipping check for target {TargetId} because the run lock is held by another node",
-                target.Id);
-            return HealthCheckExecutionResult.Skipped("Lock", triggerSource, _clock.Now);
+            _metrics.IncrementLocksContended();
+            throw new MonitoringCheckConflictException("Check already running for this target.");
         }
 
-        var now = _clock.Now;
-        if (target.CurrentStatus == ServiceStatus.Checking &&
-            target.LastCheckedAt.HasValue &&
-            now - target.LastCheckedAt.Value <= skipWindow)
+        await using (lockHandle)
         {
-            _metrics.IncrementChecksSkipped();
-            _logger.LogInformation(
-                "Skipping check for target {TargetId} because a recent check is still in progress",
-                target.Id);
-            return HealthCheckExecutionResult.Skipped("InProgress", triggerSource, now);
-        }
+            var now = _clock.Now;
+            var maintenanceState = await MaintenanceWindowHelper.GetStateAsync(
+                _maintenanceRepository,
+                target.Id,
+                now,
+                cancellationToken);
 
-        _metrics.IncrementChecksStarted();
-
-        var provider = _providerResolver.Resolve(target.Type);
-        var maxAttempts = Math.Max(1, target.MaxRetryAttempts + 1);
-        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
-        var baseDelaySeconds = Math.Max(1, target.RetryDelaySeconds);
-
-        HealthCheckResult? lastResult = null;
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            attemptCts.CancelAfter(timeout);
-
-            var stopwatch = Stopwatch.StartNew();
-            try
+            if (maintenanceState.ShouldSkip)
             {
-                var result = await provider.CheckAsync(target, triggerSource, attemptCts.Token);
-                stopwatch.Stop();
-                var responseMs = EnsureResponseTime(result.ResponseTimeMs, stopwatch.ElapsedMilliseconds);
-                result = result with { ResponseTimeMs = responseMs };
-
+                _metrics.IncrementChecksSkipped();
+                var skipped = HealthCheckResult.CreateSkipped(triggerSource, "maintenance", now);
                 _logger.LogInformation(
-                    "Check attempt {Attempt} for target {TargetId} ({TriggerSource}) completed with outcome {Outcome} in {Duration}ms",
-                    attempt,
-                    target.Id,
-                    triggerSource,
-                    result.IsSuccess ? "Ok" : "Fail",
-                    responseMs);
+                    "Skipped check for target {TargetId} because maintenance is active",
+                    target.Id);
+                return skipped;
+            }
+            if (target.CurrentStatus == ServiceStatus.Checking &&
+                target.LastCheckedAt.HasValue &&
+                now - target.LastCheckedAt.Value < attemptTimeout)
+            {
+                _metrics.IncrementChecksSkipped();
+                var skipped = HealthCheckResult.CreateSkipped(triggerSource, "already-checking", now);
+                _logger.LogInformation(
+                    "Skipped check for target {TargetId} because a recent execution is still in progress",
+                    target.Id);
+                return skipped;
+            }
 
-                if (result.IsSuccess)
+            _metrics.IncrementChecksStarted();
+
+            if (!EndpointParser.TryParse(target.Endpoint, MapEndpointType(target.Type), out var parsedEndpoint, out var parseError))
+            {
+                _metrics.IncrementChecksFailed();
+                var failure = new HealthCheckResult(false, null, parseError ?? "Invalid endpoint", triggerSource)
                 {
-                    _metrics.IncrementChecksSucceeded();
-                    return HealthCheckExecutionResult.Completed(result, _clock.Now, attempt);
+                    CompletedAt = now
+                };
+                _logger.LogWarning(
+                    "Failed to parse endpoint for target {TargetId}: {Error}",
+                    target.Id,
+                    parseError ?? "Invalid endpoint");
+                return failure;
+            }
+
+            var provider = _providerResolver.Get(parsedEndpoint.Type);
+            var providerType = provider.Type;
+            var configuredRetries = SettingsReader.Get<int>(target.SettingsJson, "maxRetryAttempts", 0);
+            var retryAttempts = configuredRetries ?? 0;
+            var maxAttempts = Math.Max(0, retryAttempts) + 1;
+            HealthCheckResult? lastResult = null;
+
+            for (var attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                attemptCts.CancelAfter(attemptTimeout);
+
+                var attemptNumber = attempt + 1;
+                var stopwatch = Stopwatch.StartNew();
+
+                try
+                {
+                    var providerResult = await provider.RunAsync(target, parsedEndpoint, triggerSource, attemptCts.Token);
+                    stopwatch.Stop();
+
+                    var durationMs = EnsureDuration(providerResult.ResponseTimeMs, stopwatch.ElapsedMilliseconds);
+                    var completedAt = _clock.Now;
+                    providerResult = providerResult with
+                    {
+                        ResponseTimeMs = durationMs,
+                        CompletedAt = completedAt
+                    };
+                    providerResult = ApplyMaintenancePolicies(providerResult, maintenanceState);
+
+                    var outcome = providerResult.IsSkipped
+                        ? "skipped"
+                        : providerResult.IsSuccess
+                            ? "success"
+                            : "failure";
+
+                    _logger.LogInformation(
+                        "Health check attempt {Attempt} for target {TargetId} via {Provider} ({TriggerSource}) finished {Outcome} in {Duration}ms",
+                        attemptNumber,
+                        target.Id,
+                        providerType,
+                        triggerSource,
+                        outcome,
+                        durationMs);
+
+                    if (providerResult.IsSuccess)
+                    {
+                        _metrics.IncrementChecksSucceeded();
+                        return providerResult;
+                    }
+
+                    lastResult = providerResult;
+                }
+                catch (OperationCanceledException) when (attemptCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    stopwatch.Stop();
+                    var durationMs = EnsureDuration(null, stopwatch.ElapsedMilliseconds);
+                    var completedAt = _clock.Now;
+                    lastResult = new HealthCheckResult(false, durationMs, $"Timeout {timeoutSeconds}s", triggerSource)
+                    {
+                        CompletedAt = completedAt
+                    };
+                    lastResult = ApplyMaintenancePolicies(lastResult, maintenanceState);
+
+                    _logger.LogWarning(
+                        "Health check attempt {Attempt} for target {TargetId} via {Provider} ({TriggerSource}) timed out after {Duration}ms",
+                        attemptNumber,
+                        target.Id,
+                        providerType,
+                        triggerSource,
+                        durationMs);
+                }
+                catch (MonitoringCheckConflictException)
+                {
+                    throw;
+                }
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                {
+                    stopwatch.Stop();
+                    var durationMs = EnsureDuration(null, stopwatch.ElapsedMilliseconds);
+                    var completedAt = _clock.Now;
+                    lastResult = new HealthCheckResult(false, durationMs, "Check error", triggerSource)
+                    {
+                        CompletedAt = completedAt
+                    };
+                    lastResult = ApplyMaintenancePolicies(lastResult, maintenanceState);
+
+                    _logger.LogWarning(
+                        ex,
+                        "Health check attempt {Attempt} for target {TargetId} via {Provider} ({TriggerSource}) failed after {Duration}ms",
+                        attemptNumber,
+                        target.Id,
+                        providerType,
+                        triggerSource,
+                        durationMs);
                 }
 
-                lastResult = result;
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attemptCts.IsCancellationRequested)
-            {
-                stopwatch.Stop();
-                var responseMs = EnsureResponseTime(null, stopwatch.ElapsedMilliseconds);
-                lastResult = new HealthCheckResult(false, responseMs, $"Timeout {timeoutSeconds}s", triggerSource);
-                _logger.LogWarning(
-                    "Check attempt {Attempt} for target {TargetId} timed out after {Duration}ms",
-                    attempt,
+                if (attemptNumber >= maxAttempts)
+                {
+                    break;
+                }
+
+                var backoffMs = Math.Min(
+                    BackoffCapMilliseconds,
+                    (int)Math.Pow(2, attempt) * BackoffBaseMilliseconds);
+
+                _logger.LogDebug(
+                    "Delaying {Delay}ms before retrying target {TargetId} via {Provider} (attempt {NextAttempt}/{MaxAttempts})",
+                    backoffMs,
                     target.Id,
-                    responseMs);
+                    providerType,
+                    attemptNumber + 1,
+                    maxAttempts);
+
+                await Task.Delay(TimeSpan.FromMilliseconds(backoffMs), cancellationToken);
             }
-            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+
+            _metrics.IncrementChecksFailed();
+            lastResult ??= new HealthCheckResult(false, null, "Unknown failure", triggerSource)
             {
-                stopwatch.Stop();
-                var responseMs = EnsureResponseTime(null, stopwatch.ElapsedMilliseconds);
-                lastResult = new HealthCheckResult(false, responseMs, "Check error", triggerSource);
-                _logger.LogWarning(ex,
-                    "Check attempt {Attempt} for target {TargetId} failed with an exception after {Duration}ms",
-                    attempt,
-                    target.Id,
-                    responseMs);
-            }
-
-            if (attempt >= maxAttempts)
-            {
-                break;
-            }
-
-            var backoffSeconds = Math.Min(BackoffCapSeconds, baseDelaySeconds * (int)Math.Pow(2, attempt - 1));
-            var delay = TimeSpan.FromSeconds(backoffSeconds);
-            _logger.LogDebug(
-                "Waiting {Delay}s before retrying target {TargetId} (attempt {Attempt}/{Max})",
-                backoffSeconds,
-                target.Id,
-                attempt + 1,
-                maxAttempts);
-
-            await Task.Delay(delay, cancellationToken);
+                CompletedAt = _clock.Now
+            };
+            return ApplyMaintenancePolicies(lastResult, maintenanceState);
         }
-
-        _metrics.IncrementChecksFailed();
-        lastResult ??= new HealthCheckResult(false, null, "Unknown failure", triggerSource);
-        return HealthCheckExecutionResult.Completed(lastResult, _clock.Now, maxAttempts);
     }
 
-    private static int EnsureResponseTime(int? existing, long elapsedMilliseconds)
+    private static int EnsureDuration(int? existing, long elapsedMilliseconds)
     {
         if (existing.HasValue)
         {
@@ -180,36 +260,28 @@ public sealed class HealthCheckExecutor
 
         return Math.Max(1, timeout);
     }
-}
 
-public sealed record HealthCheckExecutionResult
-{
-    private HealthCheckExecutionResult(bool skipped, string? skipReason, HealthCheckResult result, DateTime completedAt, int attempts)
+    private static EndpointType MapEndpointType(ServiceType type)
+        => type switch
+        {
+            ServiceType.Website => EndpointType.Website,
+            ServiceType.Api => EndpointType.Api,
+            ServiceType.Tcp => EndpointType.Tcp,
+            ServiceType.Redis => EndpointType.Redis,
+            _ => EndpointType.Website
+        };
+
+    private static HealthCheckResult ApplyMaintenancePolicies(HealthCheckResult result, MaintenanceState maintenanceState)
     {
-        Skipped = skipped;
-        SkipReason = skipReason;
-        Result = result;
-        CompletedAt = completedAt;
-        Attempts = attempts;
-    }
+        if (!maintenanceState.RecordButDontAlert)
+        {
+            return result;
+        }
 
-    public bool Skipped { get; }
-
-    public string? SkipReason { get; }
-
-    public HealthCheckResult Result { get; }
-
-    public DateTime CompletedAt { get; }
-
-    public int Attempts { get; }
-
-    public static HealthCheckExecutionResult Skipped(string reason, string triggerSource, DateTime timestamp)
-    {
-        return new HealthCheckExecutionResult(true, reason, new HealthCheckResult(false, null, reason, triggerSource), timestamp, 0);
-    }
-
-    public static HealthCheckExecutionResult Completed(HealthCheckResult result, DateTime timestamp, int attempts)
-    {
-        return new HealthCheckExecutionResult(false, null, result, timestamp, attempts);
+        return result with
+        {
+            SuppressAlerts = true,
+            SuppressOutageProcessing = true
+        };
     }
 }

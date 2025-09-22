@@ -14,9 +14,5 @@ public class CheckBatchStatusDto
 
     public int Completed { get; set; }
 
-    public int Succeeded { get; set; }
-
     public int Failed { get; set; }
-
-    public int Skipped { get; set; }
 }

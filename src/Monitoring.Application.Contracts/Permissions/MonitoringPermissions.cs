@@ -13,4 +13,19 @@ public static class MonitoringPermissions
         public const string Delete = GroupName + ".Services.Delete";
         public const string Run = GroupName + ".Services.Run";
     }
+
+    public static class AlertPolicies
+    {
+        public const string Default = GroupName + ".Alerts";
+        public const string View = Default + ".View";
+        public const string Create = Default + ".Create";
+        public const string Edit = Default + ".Edit";
+        public const string Delete = Default + ".Delete";
+    }
+
+    public static class Dashboard
+    {
+        public const string Default = GroupName + ".Dashboard";
+        public const string View = Default + ".View";
+    }
 }

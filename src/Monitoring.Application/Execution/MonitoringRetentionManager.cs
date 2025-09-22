@@ -8,9 +8,8 @@ using Microsoft.Extensions.Options;
 using Monitoring.Options;
 using Monitoring.Targets;
 using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Linq;
 using Volo.Abp.Timing;
-using Volo.Abp.Uow;
-using Volo.Abp.Threading;
 
 namespace Monitoring.Execution;
 
