@@ -22,4 +22,10 @@ public static class MonitoringPermissions
         public const string Edit = Default + ".Edit";
         public const string Delete = Default + ".Delete";
     }
+
+    public static class Dashboard
+    {
+        public const string Default = GroupName + ".Dashboard";
+        public const string View = Default + ".View";
+    }
 }
