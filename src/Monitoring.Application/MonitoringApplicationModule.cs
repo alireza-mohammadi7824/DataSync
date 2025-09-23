@@ -42,6 +42,9 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddSingleton<AlertDispatcher>();
         context.Services.TryAddSingleton<ExecutionMetrics>();
         context.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
+        context.Services.AddSingleton<IValidateOptions<MonitoringExecutionOptions>, MonitoringExecutionOptionsValidator>();
+        context.Services.AddSingleton<IValidateOptions<MonitoringRetentionOptions>, MonitoringRetentionOptionsValidator>();
+        context.Services.AddSingleton<IValidateOptions<MonitoringAlertsOptions>, MonitoringAlertsOptionsValidator>();
         context.Services.AddTransient<HealthCheckExecutor>();
         context.Services.AddTransient<IMonitoringCheckService, MonitoringCheckService>();
         context.Services.AddSingleton<BulkCheckQueue>();
@@ -53,14 +56,14 @@ public class MonitoringApplicationModule : AbpModule
 
         var configuration = context.Services.GetConfiguration();
         Configure<MonitoringOptions>(configuration.GetSection("Monitoring"));
+        Configure<MonitoringExecutionOptions>(configuration.GetSection("Monitoring:Execution"));
         Configure<MonitoringRetentionOptions>(configuration.GetSection("Monitoring:Retention"));
-        
+        Configure<MonitoringAlertsOptions>(configuration.GetSection("Monitoring:Alerts"));
+
         Configure<AbpAutoMapperOptions>(options =>
         {
             options.AddMaps<MonitoringApplicationModule>();
         });
-
-        context.Services.AddSingleton<IValidateOptions<MonitoringRetentionOptions>, MonitoringRetentionOptionsValidator>();
     }
 
     public override void OnApplicationInitialization(ApplicationInitializationContext context)

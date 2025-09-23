@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,12 +18,14 @@ namespace Monitoring.Retention;
 
 public sealed class MonitoringRetentionWorker : BackgroundService
 {
+    private static readonly (int Hour, int Minute) DefaultSchedule = (2, 30);
+
     private readonly ILogger<MonitoringRetentionWorker> _logger;
     private readonly IClock _clock;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
     private readonly IAsyncQueryableExecuter _asyncExecuter;
-    private readonly IOptions<MonitoringRetentionOptions> _options;
+    private readonly IOptionsMonitor<MonitoringRetentionOptions> _options;
 
     public MonitoringRetentionWorker(
         ILogger<MonitoringRetentionWorker> logger,
@@ -30,7 +33,7 @@ public sealed class MonitoringRetentionWorker : BackgroundService
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
         IAsyncQueryableExecuter asyncExecuter,
-        IOptions<MonitoringRetentionOptions> options)
+        IOptionsMonitor<MonitoringRetentionOptions> options)
     {
         _logger = logger;
         _clock = clock;
@@ -45,7 +48,8 @@ public sealed class MonitoringRetentionWorker : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             var nowUtc = _clock.Now.ToUniversalTime();
-            var next = NextUtcTime(nowUtc, 2, 30);
+            var schedule = ResolveSchedule(_options.CurrentValue.ScheduleUtc);
+            var next = NextUtcTime(nowUtc, schedule.Hour, schedule.Minute);
             var delay = next - nowUtc;
 
             if (delay > TimeSpan.Zero)
@@ -67,8 +71,9 @@ public sealed class MonitoringRetentionWorker : BackgroundService
 
             try
             {
+                var optionsSnapshot = _options.CurrentValue;
                 var sw = Stopwatch.StartNew();
-                var (purgedHistory, trimmedHistory, purgedOutages) = await RunOnceAsync(stoppingToken);
+                var (purgedHistory, trimmedHistory, purgedOutages) = await RunOnceAsync(optionsSnapshot, stoppingToken);
                 sw.Stop();
 
                 _logger.LogInformation(
@@ -100,17 +105,31 @@ public sealed class MonitoringRetentionWorker : BackgroundService
         return next;
     }
 
-    private async Task<(int purgedHist, int trimmedHist, int purgedOutages)> RunOnceAsync(CancellationToken ct)
+    private static (int Hour, int Minute) ResolveSchedule(string? schedule)
+    {
+        if (!string.IsNullOrWhiteSpace(schedule) &&
+            TimeSpan.TryParseExact(schedule, "hh\\:mm", CultureInfo.InvariantCulture, out var parsed))
+        {
+            var hour = Math.Clamp(parsed.Hours, 0, 23);
+            var minute = Math.Clamp(parsed.Minutes, 0, 59);
+            return (hour, minute);
+        }
+
+        return DefaultSchedule;
+    }
+
+    private async Task<(int purgedHist, int trimmedHist, int purgedOutages)> RunOnceAsync(
+        MonitoringRetentionOptions options,
+        CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
-        var options = _options.Value;
         var nowUtc = _clock.Now.ToUniversalTime();
         var cutoffUtc = nowUtc - TimeSpan.FromDays(options.HistoryDays);
 
         var purgedHistory = await PurgeHistoryByAgeAsync(cutoffUtc, options.PurgeBatchSize, ct);
         var trimmedHistory = await TrimHistoryByCapAsync(options.MaxHistoryPerTarget, options.PurgeBatchSize, ct);
-        var purgedOutages = await PurgeOutagesAsync(cutoffUtc, options.KeepOutagesPerTarget, options.PurgeBatchSize, ct);
+        var purgedOutages = await PurgeOutagesAsync(cutoffUtc, options.KeepLastOutagesPerTarget, options.PurgeBatchSize, ct);
 
         return (purgedHistory, trimmedHistory, purgedOutages);
     }

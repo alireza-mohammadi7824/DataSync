@@ -16,26 +16,27 @@ public sealed class BulkCheckProcessor : BackgroundService
     private readonly BulkCheckQueue _queue;
     private readonly IRepository<MonitoringTarget, Guid> _targetRepository;
     private readonly IMonitoringCheckService _checkService;
-    private readonly MonitoringOptions _options;
+    private readonly IOptionsMonitor<MonitoringExecutionOptions> _executionOptions;
     private readonly ILogger<BulkCheckProcessor> _logger;
 
     public BulkCheckProcessor(
         BulkCheckQueue queue,
         IRepository<MonitoringTarget, Guid> targetRepository,
         IMonitoringCheckService checkService,
-        IOptions<MonitoringOptions> options,
+        IOptionsMonitor<MonitoringExecutionOptions> executionOptions,
         ILogger<BulkCheckProcessor> logger)
     {
         _queue = queue;
         _targetRepository = targetRepository;
         _checkService = checkService;
-        _options = options.Value;
+        _executionOptions = executionOptions;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var concurrency = Math.Max(1, _options.Execution.MaxConcurrentChecks);
+        var concurrencyOptions = _executionOptions.CurrentValue;
+        var concurrency = Math.Max(1, concurrencyOptions.MaxConcurrentChecks);
         using var semaphore = new SemaphoreSlim(concurrency, concurrency);
         var running = new List<Task>();
 

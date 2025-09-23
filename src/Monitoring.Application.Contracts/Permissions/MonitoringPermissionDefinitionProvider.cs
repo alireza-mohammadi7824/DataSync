@@ -23,6 +23,9 @@ public class MonitoringPermissionDefinitionProvider : PermissionDefinitionProvid
 
         var history = monitoringGroup.AddPermission(MonitoringPermissions.History.Default, L("Permission:Monitoring.History"));
         history.AddChild(MonitoringPermissions.History.View, L("Permission:Monitoring.History.View"));
+
+        var config = monitoringGroup.AddPermission(MonitoringPermissions.Config.Default, L("Permission:Monitoring.Config"));
+        config.AddChild(MonitoringPermissions.Config.View, L("Permission:Monitoring.Config.View"));
     }
 
     private static LocalizableString L(string name)

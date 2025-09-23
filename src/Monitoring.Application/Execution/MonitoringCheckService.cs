@@ -31,6 +31,7 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
     private readonly IUnitOfWorkManager _unitOfWorkManager;
     private readonly IGuidGenerator _guidGenerator;
     private readonly MonitoringOptions _options;
+    private readonly IOptionsMonitor<MonitoringAlertsOptions> _alertsOptions;
     private readonly ILogger<MonitoringCheckService> _logger;
 
     public MonitoringCheckService(
@@ -45,6 +46,7 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
         IUnitOfWorkManager unitOfWorkManager,
         IGuidGenerator guidGenerator,
         IOptions<MonitoringOptions> options,
+        IOptionsMonitor<MonitoringAlertsOptions> alertsOptions,
         ILogger<MonitoringCheckService> logger)
     {
         _executor = executor;
@@ -58,6 +60,7 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
         _unitOfWorkManager = unitOfWorkManager;
         _guidGenerator = guidGenerator;
         _options = options.Value;
+        _alertsOptions = alertsOptions;
         _logger = logger;
     }
 
@@ -123,7 +126,7 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
         }
 
         var notifyAfterFailures = policy?.NotifyAfterFailures ?? defaults.NotifyAfterFailures;
-        var repeatMinutes = policy?.RepeatMinutes ?? defaults.RepeatMinutes;
+        var repeatMinutes = policy?.RepeatMinutes ?? ResolveDefaultRepeatMinutes(defaults);
         var recoverQuietMinutes = policy?.RecoverQuietMinutes ?? defaults.RecoverQuietMinutes;
         var suppressDuringMaintenance = policy?.SuppressDuringMaintenance ?? defaults.SuppressDuringMaintenance;
 
@@ -178,6 +181,17 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
 
         dispatches.AddRange(AlertDispatch.Create(target.Id, payload, channels));
         return dispatches;
+    }
+
+    private int ResolveDefaultRepeatMinutes(MonitoringOptions.AlertDefaultsOptions defaults)
+    {
+        var cooldownSeconds = _alertsOptions.CurrentValue.DefaultCooldownSeconds;
+        if (cooldownSeconds > 0)
+        {
+            return Math.Max(1, (int)Math.Ceiling(cooldownSeconds / 60d));
+        }
+
+        return Math.Max(1, defaults.RepeatMinutes);
     }
 
     private async Task DispatchAlertsAsync(List<AlertDispatch> dispatches, CancellationToken cancellationToken)
