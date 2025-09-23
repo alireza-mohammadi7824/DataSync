@@ -235,6 +235,8 @@ public class HRSDataIntegrationDbContext :
             b.HasIndex(x => x.IsActive);
             b.HasIndex(x => new { x.IsActive, x.NextDueAt })
                 .HasDatabaseName("IX_MonitoringTargets_IsActive_NextDueAt");
+            b.HasIndex(x => new { x.Type, x.IsActive })
+                .HasDatabaseName("IX_MonitoringTargets_Type_IsActive");
             b.HasQueryFilter(x => !x.IsDeleted);
         });
 
@@ -247,7 +249,8 @@ public class HRSDataIntegrationDbContext :
             b.HasOne<MonitoringTarget>()
                 .WithOne()
                 .HasForeignKey<AlertPolicy>(x => x.TargetId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.Restrict);
+            b.HasQueryFilter(x => !x.IsDeleted);
         });
 
         builder.Entity<MaintenanceWindow>(b =>
@@ -255,12 +258,16 @@ public class HRSDataIntegrationDbContext :
             b.ToTable(MonitoringConsts.DbTablePrefix + "Maintenance", MonitoringConsts.DbSchema);
             b.ConfigureByConvention();
             b.Property(x => x.Reason).HasMaxLength(MaintenanceWindowConsts.ReasonMaxLength);
+            b.Property(x => x.IsGlobal).IsRequired();
+            b.HasIndex(x => new { x.IsGlobal, x.StartUtc, x.EndUtc })
+                .HasDatabaseName("IX_MonitoringMaintenance_Global_Start_End");
             b.HasIndex(x => new { x.TargetId, x.StartUtc, x.EndUtc })
-                .HasDatabaseName("IX_Target_Start_End");
+                .HasDatabaseName("IX_MonitoringMaintenance_Target_Start_End");
             b.HasOne<MonitoringTarget>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetId)
                 .OnDelete(DeleteBehavior.SetNull);
+            b.HasQueryFilter(x => !x.IsDeleted);
         });
 
         builder.Entity<ServiceStatusHistory>(b =>
@@ -272,8 +279,7 @@ public class HRSDataIntegrationDbContext :
             b.Property(x => x.TriggerSource).IsRequired().HasMaxLength(MonitoringHistoryConsts.TriggerSourceMaxLength);
             b.Property(x => x.ErrorSummary).HasMaxLength(MonitoringHistoryConsts.ErrorSummaryMaxLength);
             b.HasIndex(x => new { x.TargetId, x.ChangedAt })
-                .HasDatabaseName("IX_Target_ChangedAt")
-                .IsDescending(true, true);
+                .HasDatabaseName("IX_MonitoringStatusHistory_Target_ChangedAt");
             b.HasOne<MonitoringTarget>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetId)
@@ -288,8 +294,10 @@ public class HRSDataIntegrationDbContext :
             b.Property(x => x.LastAlertAt);
             b.Property(x => x.AlertsSent).HasDefaultValue(0);
             b.HasIndex(x => new { x.TargetId, x.StartedAt })
-                .HasDatabaseName("IX_Target_StartedAt")
+                .HasDatabaseName("IX_MonitoringOutages_Target_Start")
                 .IsDescending(true, true);
+            b.HasIndex(x => new { x.TargetId, x.EndedAt })
+                .HasDatabaseName("IX_MonitoringOutages_Target_End");
             b.HasOne<MonitoringTarget>()
                 .WithMany()
                 .HasForeignKey(x => x.TargetId)
@@ -307,6 +315,10 @@ public class HRSDataIntegrationDbContext :
             b.Property(x => x.ExpiresAt).IsRequired();
             b.HasIndex(x => x.TargetId)
                 .IsUnique();
+            b.HasOne<MonitoringTarget>()
+                .WithMany()
+                .HasForeignKey(x => x.TargetId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
 

@@ -8,6 +8,8 @@ public class MaintenanceWindow : FullAuditedEntity<Guid>
 {
     public Guid? TargetId { get; private set; }
 
+    public bool IsGlobal { get; private set; }
+
     public DateTime StartUtc { get; private set; }
 
     public DateTime EndUtc { get; private set; }
@@ -21,8 +23,14 @@ public class MaintenanceWindow : FullAuditedEntity<Guid>
     public MaintenanceWindow(Guid id, Guid? targetId, DateTime startUtc, DateTime endUtc, string? reason)
         : base(id)
     {
-        TargetId = targetId;
+        SetScope(targetId);
         UpdateWindow(startUtc, endUtc, reason);
+    }
+
+    public void SetScope(Guid? targetId)
+    {
+        TargetId = targetId;
+        IsGlobal = !targetId.HasValue;
     }
 
     public void UpdateWindow(DateTime startUtc, DateTime endUtc, string? reason)
