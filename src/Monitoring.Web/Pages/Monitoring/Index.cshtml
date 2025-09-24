@@ -1,0 +1,898 @@
+@page
+@model Monitoring.Web.Pages.Monitoring.IndexModel
+@{
+    ViewData["Title"] = "Monitoring";
+    string BoolString(bool value) => value ? "true" : "false";
+}
+
+<style>
+    .monitoring-summary-card {
+        border-radius: .75rem;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        background-color: #ffffff;
+        padding: 1.25rem;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        min-height: 6.5rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+
+    .monitoring-summary-card h2 {
+        font-size: 1.75rem;
+        font-weight: 600;
+        margin-bottom: .25rem;
+    }
+
+    .monitoring-summary-card small {
+        color: #6b7280;
+    }
+
+    .monitoring-target-card {
+        border-radius: .85rem;
+        border: 2px solid transparent;
+        padding: 1.25rem;
+        height: 100%;
+        background: #ffffff;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+        transition: border-color .2s ease, box-shadow .2s ease;
+        position: relative;
+    }
+
+    .monitoring-target-card.status-online {
+        border-color: #22c55e;
+    }
+
+    .monitoring-target-card.status-offline {
+        border-color: #ef4444;
+    }
+
+    .monitoring-target-card.status-checking {
+        border-color: #f59e0b;
+        animation: monitoring-pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes monitoring-pulse {
+        0% {
+            box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.2);
+        }
+
+        70% {
+            box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.0);
+        }
+
+        100% {
+            box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.0);
+        }
+    }
+
+    .monitoring-status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: .4rem;
+        font-size: .85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        padding: .35rem .6rem;
+        border-radius: 9999px;
+        background: rgba(15, 23, 42, 0.04);
+    }
+
+    .monitoring-status-pill.status-online {
+        color: #166534;
+        background: rgba(34, 197, 94, 0.12);
+    }
+
+    .monitoring-status-pill.status-offline {
+        color: #991b1b;
+        background: rgba(239, 68, 68, 0.12);
+    }
+
+    .monitoring-status-pill.status-checking {
+        color: #92400e;
+        background: rgba(245, 158, 11, 0.18);
+    }
+
+    .monitoring-target-card .metrics {
+        font-size: .9rem;
+        margin-top: 1rem;
+    }
+
+    .monitoring-target-card .metrics dt {
+        color: #6b7280;
+        font-weight: 500;
+        margin-bottom: .25rem;
+    }
+
+    .monitoring-target-card .metrics dd {
+        margin: 0 0 .5rem 0;
+        font-weight: 600;
+    }
+
+    .monitoring-checking-spinner {
+        width: 1rem;
+        height: 1rem;
+    }
+</style>
+
+<div class="container-fluid" id="monitoring-overview"
+     data-can-run="@BoolString(Model.CanRunChecks)"
+     data-can-view-history="@BoolString(Model.CanViewHistory)"
+     data-can-view-metrics="@BoolString(Model.CanViewMetrics)">
+    <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3 mb-4">
+        <div>
+            <h1 class="mb-1">Monitoring</h1>
+            <p class="text-muted mb-0">At-a-glance uptime, reliability, and recent activity across your targets.</p>
+        </div>
+        @if (Model.CanRunChecks)
+        {
+            <div class="d-flex flex-wrap gap-2">
+                <button id="monitoring-check-all" class="btn btn-primary btn-sm" type="button">
+                    <i class="fa fa-play-circle me-1"></i>
+                    Check all
+                </button>
+                <span id="monitoring-check-all-status" class="text-muted small align-self-center"></span>
+            </div>
+        }
+    </div>
+
+    <div class="row g-3 mb-3" id="monitoring-summary-cards">
+        <div class="col-12 col-sm-6 col-xl-2">
+            <div class="monitoring-summary-card">
+                <div>
+                    <p class="text-muted mb-1">Uptime 24h</p>
+                    <h2 id="monitoring-uptime-24h">—</h2>
+                </div>
+                <small id="monitoring-uptime-24h-desc">Rolling last 24 hours</small>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl-2">
+            <div class="monitoring-summary-card">
+                <div>
+                    <p class="text-muted mb-1">Uptime 7d</p>
+                    <h2 id="monitoring-uptime-7d">—</h2>
+                </div>
+                <small>Weekly availability</small>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl-2">
+            <div class="monitoring-summary-card">
+                <div>
+                    <p class="text-muted mb-1">Uptime 30d</p>
+                    <h2 id="monitoring-uptime-30d">—</h2>
+                </div>
+                <small>Month to date</small>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="monitoring-summary-card">
+                <div>
+                    <p class="text-muted mb-1">MTTR (30d)</p>
+                    <h2 id="monitoring-mttr-30d">—</h2>
+                </div>
+                <small>Mean recovery time (hours)</small>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="monitoring-summary-card">
+                <div>
+                    <p class="text-muted mb-1">MTBF (30d)</p>
+                    <h2 id="monitoring-mtbf-30d">—</h2>
+                </div>
+                <small>Mean time between failures</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex flex-wrap align-items-center gap-3 mb-4" id="monitoring-summary-counts">
+        <span class="badge bg-success-subtle text-success" id="monitoring-count-online">Online: —</span>
+        <span class="badge bg-danger-subtle text-danger" id="monitoring-count-offline">Offline: —</span>
+        <span class="badge bg-warning-subtle text-warning" id="monitoring-count-checking">Checking: —</span>
+        <small class="text-muted" id="monitoring-summary-generated">Updated —</small>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-12 col-xl-9">
+            <div id="monitoring-target-grid" class="row row-cols-1 row-cols-md-2 row-cols-xxl-3 g-3" aria-live="polite"></div>
+            <div id="monitoring-target-empty" class="alert alert-light border mt-3 d-none" role="status">
+                No monitoring targets found.
+            </div>
+        </div>
+        <div class="col-12 col-xl-3">
+            @if (Model.CanViewMetrics)
+            {
+                @await Html.PartialAsync("Monitoring/MetricsPanel", Model)
+            }
+        </div>
+    </div>
+</div>
+
+@if (Model.CanViewHistory)
+{
+    @await Html.PartialAsync("Monitoring/OutagesModal", Model)
+}
+
+<script type="application/json" id="monitoring-summary-json">@Html.Raw(Model.SummaryJson ?? "null")</script>
+<script type="application/json" id="monitoring-targets-json">@Html.Raw(Model.TargetsJson ?? "null")</script>
+@if (Model.CanViewMetrics)
+{
+    <script type="application/json" id="monitoring-metrics-json">@Html.Raw(Model.MetricsJson ?? "null")</script>
+}
+
+<script>
+    (function () {
+        const page = document.getElementById('monitoring-overview');
+        if (!page) {
+            return;
+        }
+
+        const canRun = page.dataset.canRun === 'true';
+        const canViewHistory = page.dataset.canViewHistory === 'true';
+        const canViewMetrics = page.dataset.canViewMetrics === 'true';
+
+        const summaryElements = {
+            uptime24h: document.getElementById('monitoring-uptime-24h'),
+            uptime7d: document.getElementById('monitoring-uptime-7d'),
+            uptime30d: document.getElementById('monitoring-uptime-30d'),
+            mttr30d: document.getElementById('monitoring-mttr-30d'),
+            mtbf30d: document.getElementById('monitoring-mtbf-30d'),
+            online: document.getElementById('monitoring-count-online'),
+            offline: document.getElementById('monitoring-count-offline'),
+            checking: document.getElementById('monitoring-count-checking'),
+            generated: document.getElementById('monitoring-summary-generated')
+        };
+
+        const targetGrid = document.getElementById('monitoring-target-grid');
+        const targetEmptyState = document.getElementById('monitoring-target-empty');
+        const checkAllButton = document.getElementById('monitoring-check-all');
+        const checkAllStatus = document.getElementById('monitoring-check-all-status');
+        const outagesModalElement = document.getElementById('monitoring-outages-modal');
+        const metricsElements = canViewMetrics ? {
+            container: document.getElementById('monitoring-metrics-panel'),
+            generated: document.getElementById('monitoring-metrics-generated'),
+            started: document.getElementById('monitoring-metrics-started'),
+            succeeded: document.getElementById('monitoring-metrics-succeeded'),
+            failed: document.getElementById('monitoring-metrics-failed'),
+            skipped: document.getElementById('monitoring-metrics-skipped'),
+            locks: document.getElementById('monitoring-metrics-locks')
+        } : null;
+
+        const statusClassMap = {
+            0: 'status-online',
+            1: 'status-offline',
+            2: 'status-checking'
+        };
+
+        const statusLabelMap = {
+            0: 'Online',
+            1: 'Offline',
+            2: 'Checking'
+        };
+
+        const pendingControllers = new Set();
+        const keyedControllers = new Map();
+        let metricsTimer = null;
+
+        window.addEventListener('beforeunload', () => {
+            pendingControllers.forEach(controller => controller.abort());
+            pendingControllers.clear();
+            keyedControllers.clear();
+            if (metricsTimer !== null) {
+                clearInterval(metricsTimer);
+                metricsTimer = null;
+            }
+        });
+
+        function notify(kind, message) {
+            if (!message) {
+                return;
+            }
+
+            const notifyApi = window.abp?.notify;
+            if (notifyApi && typeof notifyApi[kind] === 'function') {
+                notifyApi[kind](message);
+            } else {
+                const fallback = kind === 'error' ? console.error : console.log;
+                fallback(message);
+            }
+        }
+
+        function createController(key) {
+            const controller = new AbortController();
+            if (key) {
+                const existing = keyedControllers.get(key);
+                if (existing) {
+                    existing.abort();
+                    keyedControllers.delete(key);
+                }
+                keyedControllers.set(key, controller);
+            }
+
+            pendingControllers.add(controller);
+            return controller;
+        }
+
+        function finalizeController(controller, key) {
+            pendingControllers.delete(controller);
+            if (key) {
+                const existing = keyedControllers.get(key);
+                if (existing === controller) {
+                    keyedControllers.delete(key);
+                }
+            }
+        }
+
+        async function fetchJson(url, options) {
+            const { method = 'GET', body, abortKey, unauthorizedMessage, rateLimitedMessage, errorMessage } = options ?? {};
+            const controller = createController(abortKey);
+
+            const requestOptions = {
+                method,
+                signal: controller.signal,
+                headers: {
+                    'Accept': 'application/json'
+                }
+            };
+
+            if (body != null) {
+                requestOptions.body = body;
+                requestOptions.headers['Content-Type'] = 'application/json';
+            }
+
+            try {
+                const response = await fetch(url, requestOptions);
+
+                if (response.status === 401 || response.status === 403) {
+                    notify('warn', unauthorizedMessage ?? 'You are not authorized to complete this action.');
+                    return null;
+                }
+
+                if (response.status === 429) {
+                    notify('warn', rateLimitedMessage ?? 'Rate limited. Please try again shortly.');
+                    return null;
+                }
+
+                if (!response.ok && response.status === 409) {
+                    try {
+                        const payload = await response.json();
+                        const conflictMessage = payload?.error?.message ?? payload?.message;
+                        notify('warn', conflictMessage ?? 'A check is already running for this target.');
+                    } catch (err) {
+                        notify('warn', 'A check is already running for this target.');
+                    }
+                    return null;
+                }
+
+                if (!response.ok) {
+                    notify('error', errorMessage ?? 'The monitoring request failed.');
+                    return null;
+                }
+
+                if (response.status === 204) {
+                    return null;
+                }
+
+                try {
+                    return await response.json();
+                } catch (err) {
+                    notify('error', errorMessage ?? 'Failed to parse monitoring response.');
+                    return null;
+                }
+            } catch (error) {
+                if ((error instanceof DOMException && error.name === 'AbortError') || error.name === 'AbortError') {
+                    return null;
+                }
+
+                console.error('Monitoring fetch error', error);
+                notify('error', errorMessage ?? 'The monitoring request could not be completed.');
+                return null;
+            } finally {
+                finalizeController(controller, abortKey);
+            }
+        }
+
+        function parseInitialJson(id) {
+            const element = document.getElementById(id);
+            if (!element) {
+                return null;
+            }
+
+            const raw = element.textContent;
+            if (!raw) {
+                return null;
+            }
+
+            try {
+                return JSON.parse(raw);
+            } catch (error) {
+                console.warn('Failed to parse initial monitoring data', error);
+                return null;
+            }
+        }
+
+        function formatPercent(value) {
+            if (value == null || Number.isNaN(value)) {
+                return '—';
+            }
+
+            return `${Math.max(0, Math.min(100, Number(value))).toFixed(1)}%`;
+        }
+
+        function formatHours(value) {
+            if (value == null || Number.isNaN(value) || value <= 0) {
+                return '—';
+            }
+
+            const totalMinutes = Math.round(value * 60);
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = totalMinutes % 60;
+
+            if (hours === 0) {
+                return `${minutes}m`;
+            }
+
+            if (minutes === 0) {
+                return `${hours}h`;
+            }
+
+            return `${hours}h ${minutes}m`;
+        }
+
+        function formatDate(value) {
+            if (!value) {
+                return '—';
+            }
+
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) {
+                return '—';
+            }
+
+            return date.toLocaleString();
+        }
+
+        function renderSummary(data) {
+            if (!data) {
+                return;
+            }
+
+            if (summaryElements.uptime24h) {
+                summaryElements.uptime24h.textContent = formatPercent(data.uptime24h);
+            }
+
+            if (summaryElements.uptime7d) {
+                summaryElements.uptime7d.textContent = formatPercent(data.uptime7d);
+            }
+
+            if (summaryElements.uptime30d) {
+                summaryElements.uptime30d.textContent = formatPercent(data.uptime30d);
+            }
+
+            if (summaryElements.mttr30d) {
+                summaryElements.mttr30d.textContent = formatHours(data.mttr30d);
+            }
+
+            if (summaryElements.mtbf30d) {
+                summaryElements.mtbf30d.textContent = formatHours(data.mtbf30d);
+            }
+
+            if (summaryElements.online) {
+                summaryElements.online.textContent = `Online: ${data.onlineCount ?? '—'}`;
+            }
+
+            if (summaryElements.offline) {
+                summaryElements.offline.textContent = `Offline: ${data.offlineCount ?? '—'}`;
+            }
+
+            if (summaryElements.checking) {
+                summaryElements.checking.textContent = `Checking: ${data.checkingCount ?? '—'}`;
+            }
+
+            if (summaryElements.generated) {
+                summaryElements.generated.textContent = data.generatedAtUtc
+                    ? `Updated ${formatDate(data.generatedAtUtc)}`
+                    : 'Updated —';
+            }
+        }
+
+        function createMetric(label, value) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'col';
+
+            const term = document.createElement('dt');
+            term.textContent = label;
+            const description = document.createElement('dd');
+            description.textContent = value ?? '—';
+
+            wrapper.appendChild(term);
+            wrapper.appendChild(description);
+            return wrapper;
+        }
+
+        function buildTargetCard(target) {
+            const col = document.createElement('div');
+            col.className = 'col';
+
+            const card = document.createElement('div');
+            const statusClass = statusClassMap[target.currentStatus] ?? 'status-checking';
+            card.className = `monitoring-target-card ${statusClass}`;
+            card.dataset.targetId = target.id;
+
+            const header = document.createElement('div');
+            header.className = 'd-flex justify-content-between align-items-start gap-2';
+
+            const title = document.createElement('div');
+            const heading = document.createElement('h5');
+            heading.className = 'mb-1';
+            heading.textContent = target.name ?? '';
+            const subtitle = document.createElement('span');
+            subtitle.className = 'text-muted small';
+            subtitle.textContent = target.serviceType ?? '';
+            title.appendChild(heading);
+            title.appendChild(subtitle);
+            header.appendChild(title);
+
+            const statusPill = document.createElement('span');
+            statusPill.className = `monitoring-status-pill ${statusClass}`;
+            statusPill.textContent = statusLabelMap[target.currentStatus] ?? 'Checking';
+            header.appendChild(statusPill);
+
+            card.appendChild(header);
+
+            const metricsList = document.createElement('dl');
+            metricsList.className = 'metrics row row-cols-2 gy-2';
+            metricsList.appendChild(createMetric('Uptime 24h', formatPercent(target.uptime24h)));
+            metricsList.appendChild(createMetric('Uptime 7d', formatPercent(target.uptime7d)));
+            metricsList.appendChild(createMetric('Uptime 30d', formatPercent(target.uptime30d)));
+            metricsList.appendChild(createMetric('Last outage', target.lastOutageStartUtc ? formatDate(target.lastOutageStartUtc) : '—'));
+            card.appendChild(metricsList);
+
+            const actions = document.createElement('div');
+            actions.className = 'd-flex flex-wrap gap-2 mt-3';
+
+            if (canRun) {
+                const checkButton = document.createElement('button');
+                checkButton.type = 'button';
+                checkButton.className = 'btn btn-outline-primary btn-sm monitoring-check-now';
+                checkButton.textContent = 'Check now';
+                checkButton.dataset.targetId = target.id;
+                checkButton.dataset.targetName = target.name ?? '';
+                actions.appendChild(checkButton);
+            }
+
+            if (canViewHistory) {
+                const outagesButton = document.createElement('button');
+                outagesButton.type = 'button';
+                outagesButton.className = 'btn btn-outline-secondary btn-sm monitoring-view-outages';
+                outagesButton.textContent = 'Outages';
+                outagesButton.dataset.targetId = target.id;
+                outagesButton.dataset.targetName = target.name ?? '';
+                actions.appendChild(outagesButton);
+            }
+
+            if (actions.children.length > 0) {
+                card.appendChild(actions);
+            }
+
+            col.appendChild(card);
+            return col;
+        }
+
+        function renderTargets(data) {
+            if (!targetGrid) {
+                return;
+            }
+
+            targetGrid.innerHTML = '';
+
+            const items = data?.items ?? [];
+            if (items.length === 0) {
+                if (targetEmptyState) {
+                    targetEmptyState.classList.remove('d-none');
+                }
+                return;
+            }
+
+            if (targetEmptyState) {
+                targetEmptyState.classList.add('d-none');
+            }
+
+            items.forEach(item => {
+                const card = buildTargetCard(item);
+                targetGrid.appendChild(card);
+            });
+
+            attachTargetActions();
+        }
+
+        function attachTargetActions() {
+            if (canRun) {
+                targetGrid.querySelectorAll('.monitoring-check-now').forEach(button => {
+                    button.addEventListener('click', onCheckNowClick);
+                });
+            }
+
+            if (canViewHistory) {
+                targetGrid.querySelectorAll('.monitoring-view-outages').forEach(button => {
+                    button.addEventListener('click', onOutagesClick);
+                });
+            }
+        }
+
+        async function onCheckNowClick(event) {
+            const button = event.currentTarget;
+            if (!(button instanceof HTMLElement)) {
+                return;
+            }
+
+            const targetId = button.dataset.targetId;
+            const targetName = button.dataset.targetName ?? 'target';
+            if (!targetId) {
+                return;
+            }
+
+            const originalContent = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm monitoring-checking-spinner" role="status" aria-hidden="true"></span>';
+
+            try {
+                const result = await fetchJson(`/api/monitoring/targets/${targetId}/check`, {
+                    method: 'POST',
+                    abortKey: `check-${targetId}`,
+                    unauthorizedMessage: 'You are not authorized to run checks.',
+                    rateLimitedMessage: 'Too many check requests. Please try again shortly.',
+                    errorMessage: 'Failed to trigger the check.'
+                });
+
+                if (result !== null) {
+                    notify('success', `Check started for ${targetName}.`);
+                    await refreshData();
+                }
+            } finally {
+                button.disabled = false;
+                button.innerHTML = originalContent;
+            }
+        }
+
+        async function onOutagesClick(event) {
+            const button = event.currentTarget;
+            if (!(button instanceof HTMLElement)) {
+                return;
+            }
+
+            const targetId = button.dataset.targetId;
+            const targetName = button.dataset.targetName ?? 'target';
+            if (!targetId || !outagesModalElement) {
+                return;
+            }
+
+            const modalTitle = outagesModalElement.querySelector('#monitoring-outages-title');
+            const modalBody = outagesModalElement.querySelector('#monitoring-outages-body');
+            if (modalTitle) {
+                modalTitle.textContent = `Recent outages · ${targetName}`;
+            }
+
+            if (modalBody) {
+                modalBody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">Loading…</td></tr>';
+            }
+
+            const data = await fetchJson(`/api/monitoring/targets/${targetId}/outages?count=10`, {
+                abortKey: 'outages',
+                unauthorizedMessage: 'You are not authorized to view outages.',
+                errorMessage: 'Failed to load outages.'
+            });
+
+            if (modalBody) {
+                if (!data || !Array.isArray(data.items) || data.items.length === 0) {
+                    modalBody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">No outages recorded.</td></tr>';
+                } else {
+                    const rows = data.items.map(item => {
+                        const started = formatDate(item.startedAtUtc);
+                        const ended = item.endedAtUtc ? formatDate(item.endedAtUtc) : 'Ongoing';
+                        const duration = item.endedAtUtc
+                            ? formatDuration(item.startedAtUtc, item.endedAtUtc)
+                            : '—';
+                        return `<tr><td>${started}</td><td>${ended}</td><td>${duration}</td></tr>`;
+                    }).join('');
+
+                    modalBody.innerHTML = rows;
+                }
+            }
+
+            if (window.bootstrap) {
+                const modal = window.bootstrap.Modal.getOrCreateInstance(outagesModalElement);
+                modal.show();
+            }
+        }
+
+        function formatDuration(startUtc, endUtc) {
+            if (!startUtc) {
+                return '—';
+            }
+
+            const start = new Date(startUtc);
+            const end = endUtc ? new Date(endUtc) : new Date();
+
+            if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+                return '—';
+            }
+
+            const diff = Math.max(0, end.getTime() - start.getTime());
+            const totalMinutes = Math.round(diff / 60000);
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = totalMinutes % 60;
+
+            if (hours === 0) {
+                return `${minutes}m`;
+            }
+
+            if (minutes === 0) {
+                return `${hours}h`;
+            }
+
+            return `${hours}h ${minutes}m`;
+        }
+
+        async function refreshData() {
+            await Promise.all([
+                loadSummary(),
+                loadTargets()
+            ]);
+        }
+
+        async function loadSummary() {
+            const data = await fetchJson('/api/monitoring/dashboard/summary', {
+                abortKey: 'summary',
+                errorMessage: 'Failed to load dashboard summary.'
+            });
+
+            if (data) {
+                renderSummary(data);
+            }
+        }
+
+        async function loadTargets() {
+            const data = await fetchJson('/api/monitoring/dashboard/targets?skipCount=0&maxResultCount=50', {
+                abortKey: 'targets',
+                errorMessage: 'Failed to load monitoring targets.'
+            });
+
+            if (data) {
+                renderTargets(data);
+            }
+        }
+
+        async function loadMetrics() {
+            if (!canViewMetrics || !metricsElements || !metricsElements.container) {
+                return;
+            }
+
+            const data = await fetchJson('/api/monitoring/metrics', {
+                abortKey: 'metrics',
+                unauthorizedMessage: 'You are not authorized to view metrics.',
+                errorMessage: 'Failed to load monitoring metrics.'
+            });
+
+            if (!data) {
+                return;
+            }
+
+            updateMetrics(data);
+        }
+
+        function updateMetrics(data) {
+            if (!metricsElements) {
+                return;
+            }
+
+            if (metricsElements.generated) {
+                metricsElements.generated.textContent = data.generatedAtUtc ? formatDate(data.generatedAtUtc) : '—';
+            }
+
+            if (metricsElements.started) {
+                metricsElements.started.textContent = data.checksStarted ?? '0';
+            }
+
+            if (metricsElements.succeeded) {
+                metricsElements.succeeded.textContent = data.checksSucceeded ?? '0';
+            }
+
+            if (metricsElements.failed) {
+                metricsElements.failed.textContent = data.checksFailed ?? '0';
+            }
+
+            if (metricsElements.skipped) {
+                metricsElements.skipped.textContent = data.checksSkipped ?? '0';
+            }
+
+            if (metricsElements.locks) {
+                metricsElements.locks.textContent = data.locksContended ?? '0';
+            }
+        }
+
+        function startMetricsRefresh(initialData) {
+            if (!canViewMetrics) {
+                return;
+            }
+
+            if (initialData) {
+                updateMetrics(initialData);
+            }
+
+            void loadMetrics();
+            if (metricsTimer !== null) {
+                clearInterval(metricsTimer);
+            }
+
+            metricsTimer = setInterval(() => void loadMetrics(), 10000);
+        }
+
+        function initialiseSummary(initialData) {
+            if (initialData) {
+                renderSummary(initialData);
+            } else {
+                void loadSummary();
+            }
+        }
+
+        function initialiseTargets(initialData) {
+            if (initialData) {
+                renderTargets(initialData);
+            } else {
+                void loadTargets();
+            }
+        }
+
+        if (checkAllButton) {
+            checkAllButton.addEventListener('click', async () => {
+                if (checkAllButton.disabled) {
+                    return;
+                }
+
+                checkAllButton.disabled = true;
+                if (checkAllStatus) {
+                    checkAllStatus.textContent = 'Submitting…';
+                }
+
+                try {
+                    const result = await fetchJson('/api/monitoring/targets/check-all', {
+                        method: 'POST',
+                        abortKey: 'check-all',
+                        unauthorizedMessage: 'You are not authorized to run bulk checks.',
+                        rateLimitedMessage: 'Bulk check is currently rate limited. Try again soon.',
+                        errorMessage: 'Failed to queue bulk check.'
+                    });
+
+                    if (result) {
+                        const batchId = result.batchId ?? result.BatchId ?? null;
+                        if (checkAllStatus) {
+                            checkAllStatus.textContent = batchId ? `Batch queued (${batchId})` : 'Bulk check accepted.';
+                        }
+                        notify('success', 'Bulk check accepted. Targets are being queued.');
+                        await refreshData();
+                    } else {
+                        if (checkAllStatus) {
+                            checkAllStatus.textContent = 'Bulk check could not be started.';
+                        }
+                    }
+                } finally {
+                    setTimeout(() => {
+                        checkAllButton.disabled = false;
+                        if (checkAllStatus && checkAllStatus.textContent === 'Submitting…') {
+                            checkAllStatus.textContent = '';
+                        }
+                    }, 3000);
+                }
+            });
+        }
+
+        const initialSummary = parseInitialJson('monitoring-summary-json');
+        const initialTargets = parseInitialJson('monitoring-targets-json');
+        const initialMetrics = canViewMetrics ? parseInitialJson('monitoring-metrics-json') : null;
+
+        initialiseSummary(initialSummary);
+        initialiseTargets(initialTargets);
+        startMetricsRefresh(initialMetrics);
+    })();
+</script>

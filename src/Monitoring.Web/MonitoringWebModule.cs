@@ -1,4 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using Monitoring.Menus;
+using Monitoring.Web.Services;
 using Volo.Abp.AspNetCore.Mvc.UI.Theme.Shared;
 using Volo.Abp.AutoMapper;
 using Volo.Abp.Modularity;
@@ -16,6 +18,8 @@ public class MonitoringWebModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
+        context.Services.AddHttpClient<MonitoringApiClient>();
+
         Configure<AbpNavigationOptions>(options =>
         {
             options.MenuContributors.Add(new MonitoringMenuContributor());
