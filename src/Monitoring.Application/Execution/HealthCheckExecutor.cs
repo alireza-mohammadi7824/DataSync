@@ -238,14 +238,14 @@ public sealed record HealthCheckExecutionResult
 {
     private HealthCheckExecutionResult(bool skipped, string? skipReason, HealthCheckResult result, DateTime completedAt, int attempts)
     {
-        Skipped = skipped;
+        IsSkipped = skipped;
         SkipReason = skipReason;
         Result = result;
         CompletedAt = completedAt;
         Attempts = attempts;
     }
 
-    public bool Skipped { get; }
+    public bool IsSkipped { get; }
 
     public string? SkipReason { get; }
 

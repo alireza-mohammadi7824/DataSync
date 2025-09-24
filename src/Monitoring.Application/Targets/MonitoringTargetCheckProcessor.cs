@@ -183,7 +183,7 @@ internal static class MonitoringTargetCheckProcessor
     }
 }
 
-internal sealed class MonitoringCheckOutcome
+public sealed class MonitoringCheckOutcome
 {
     public MonitoringCheckOutcome(
         ServiceStatus previousStatus,

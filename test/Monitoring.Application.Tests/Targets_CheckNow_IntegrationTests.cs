@@ -45,7 +45,7 @@ public sealed class Targets_CheckNow_IntegrationTests : MonitoringIntegrationTes
 
         var result = await executor.ExecuteAsync(target, "test", CancellationToken.None);
 
-        result.Skipped.Should().BeFalse();
+        result.IsSkipped.Should().BeFalse();
         result.Result.IsSuccess.Should().BeTrue();
         target.CurrentStatus.Should().Be(ServiceStatus.Online);
     }

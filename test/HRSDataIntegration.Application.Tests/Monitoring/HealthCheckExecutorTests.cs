@@ -37,7 +37,7 @@ public class HealthCheckExecutorTests
 
         var result = await executor.ExecuteAsync(target, "manual", CancellationToken.None);
 
-        result.Skipped.ShouldBeTrue();
+        result.IsSkipped.ShouldBeTrue();
         metrics.CreateSnapshot().ChecksSkipped.ShouldBe(1);
     }
 
@@ -70,7 +70,7 @@ public class HealthCheckExecutorTests
 
         var result = await executor.ExecuteAsync(target, "manual", CancellationToken.None);
 
-        result.Skipped.ShouldBeFalse();
+        result.IsSkipped.ShouldBeFalse();
         result.Result.IsSuccess.ShouldBeTrue();
         metrics.CreateSnapshot().ChecksSucceeded.ShouldBe(1);
     }

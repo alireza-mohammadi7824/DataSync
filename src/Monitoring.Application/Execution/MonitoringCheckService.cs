@@ -73,7 +73,7 @@ public sealed class MonitoringCheckService : IMonitoringCheckService
         var previousLastUpAt = target.LastUpAt;
 
         var execution = await _executor.ExecuteAsync(target, triggerSource, cancellationToken);
-        if (execution.Skipped)
+        if (execution.IsSkipped)
         {
             return CheckProcessingResult.Skipped(execution.SkipReason ?? "Skipped");
         }
