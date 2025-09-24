@@ -31,4 +31,10 @@ public static class MonitoringPermissions
         public const string Default = GroupName + ".Config";
         public const string View = Default + ".View";
     }
+
+    public static class Metrics
+    {
+        public const string Default = GroupName + ".Metrics";
+        public const string View = Default + ".View";
+    }
 }

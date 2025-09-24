@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Monitoring.Execution;
 using Monitoring.HealthChecks;
 using Monitoring.Options;
+using Monitoring.Observability;
 using Monitoring.Targets;
 using Volo.Abp.Timing;
 using Xunit;
@@ -64,6 +65,7 @@ public sealed class Targets_CheckNow_IntegrationTests : MonitoringIntegrationTes
         services.Configure<MonitoringExecutionOptions>(_ => { });
         services.AddSingleton<IClock>(new TestClock(DateTime.UtcNow));
         services.AddSingleton<ExecutionMetrics>();
+        services.AddSingleton<MonitoringMetrics>();
         services.AddSingleton<SuccessHealthCheckProvider>();
         services.AddSingleton<IHealthCheckProvider>(sp => sp.GetRequiredService<SuccessHealthCheckProvider>());
         services.AddSingleton<IHealthCheckProviderResolver>(sp =>

@@ -5,6 +5,7 @@ using Monitoring.Alerts;
 using Monitoring.Execution;
 using Monitoring.HealthChecks;
 using Monitoring.Options;
+using Monitoring.Observability;
 using Monitoring.Retention;
 using Monitoring.Workers;
 using Microsoft.Extensions.Options;
@@ -41,6 +42,7 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddSingleton<Monitoring.Alerts.Delivery.NotificationChannelResolver>();
         context.Services.AddSingleton<AlertDispatcher>();
         context.Services.TryAddSingleton<ExecutionMetrics>();
+        context.Services.TryAddSingleton<MonitoringMetrics>();
         context.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
         context.Services.AddSingleton<IValidateOptions<MonitoringExecutionOptions>, MonitoringExecutionOptionsValidator>();
         context.Services.AddSingleton<IValidateOptions<MonitoringRetentionOptions>, MonitoringRetentionOptionsValidator>();

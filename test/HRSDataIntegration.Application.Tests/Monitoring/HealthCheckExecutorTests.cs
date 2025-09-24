@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Monitoring.Execution;
 using Monitoring.HealthChecks;
 using Monitoring.Options;
+using Monitoring.Observability;
 using Monitoring.Targets;
 using Shouldly;
 using Volo.Abp.Timing;
@@ -21,12 +22,14 @@ public class HealthCheckExecutorTests
     {
         var options = Options.Create(new MonitoringOptions());
         var metrics = new ExecutionMetrics();
+        var monitoringMetrics = new MonitoringMetrics();
         var executor = new HealthCheckExecutor(
             new StaticProviderResolver(new SequenceProvider(new Queue<HealthCheckResult>())),
             new FailingRunLock(),
             new TestClock(DateTime.UtcNow),
             options,
             metrics,
+            monitoringMetrics,
             NullLogger<HealthCheckExecutor>.Instance);
 
         var target = CreateTarget();
@@ -52,12 +55,14 @@ public class HealthCheckExecutorTests
             new HealthCheckResult(true, 8, null, "manual")
         });
 
+        var monitoringMetrics = new MonitoringMetrics();
         var executor = new HealthCheckExecutor(
             new StaticProviderResolver(new SequenceProvider(results)),
             new SuccessfulRunLock(),
             new TestClock(DateTime.UtcNow),
             options,
             metrics,
+            monitoringMetrics,
             NullLogger<HealthCheckExecutor>.Instance);
 
         var target = CreateTarget(maxRetries: 1);

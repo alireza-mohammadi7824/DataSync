@@ -166,10 +166,4 @@ public class MonitoringTargetController : MonitoringController
         return _monitoringTargetAppService.GetCheckBatchStatusAsync(id);
     }
 
-    [HttpGet]
-    [Route("~/api/monitoring/metrics")]
-    public virtual Task<MonitoringMetricsDto> GetMetricsAsync()
-    {
-        return _monitoringTargetAppService.GetMetricsAsync();
-    }
 }
