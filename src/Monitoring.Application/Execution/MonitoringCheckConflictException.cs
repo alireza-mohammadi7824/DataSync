@@ -4,9 +4,9 @@ namespace Monitoring.Execution;
 
 public sealed class MonitoringCheckConflictException : BusinessException
 {
-    public MonitoringCheckConflictException(string message = "Check is already running for this target.")
+    public MonitoringCheckConflictException(string? details = null)
         : base("Monitoring:CheckConflict")
     {
-        Details = message;
+        Details = details ?? "Check is already running for this target.";
     }
 }

@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using Monitoring.Permissions;
 using Monitoring.Targets;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Authorization;
 using Volo.Abp.Domain.Repositories;
-using Volo.Abp.Linq;
 
 namespace Monitoring.Dashboard;
 
@@ -18,18 +18,15 @@ public class DashboardAppService : ApplicationService, IDashboardAppService
     private readonly IRepository<MonitoringTarget, Guid> _targetRepository;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
-    private readonly IAsyncQueryableExecuter _asyncExecuter;
 
     public DashboardAppService(
         IRepository<MonitoringTarget, Guid> targetRepository,
         IRepository<ServiceStatusHistory, Guid> historyRepository,
-        IRepository<OutageWindow, Guid> outageRepository,
-        IAsyncQueryableExecuter asyncExecuter)
+        IRepository<OutageWindow, Guid> outageRepository)
     {
         _targetRepository = targetRepository;
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
-        _asyncExecuter = asyncExecuter;
     }
 
     public virtual async Task<DashboardSummaryDto> GetSummaryAsync()
@@ -41,8 +38,9 @@ public class DashboardAppService : ApplicationService, IDashboardAppService
         var window30Start = nowUtc.AddDays(-30);
 
         var targetQuery = await _targetRepository.GetQueryableAsync();
-        var targetSnapshots = await _asyncExecuter.ToListAsync(
-            targetQuery.Select(t => new { t.Id, t.CurrentStatus }));
+        var targetSnapshots = await targetQuery
+            .Select(t => new { t.Id, t.CurrentStatus })
+            .ToListAsync();
 
         var totalTargets = targetSnapshots.Count;
 
@@ -65,9 +63,9 @@ public class DashboardAppService : ApplicationService, IDashboardAppService
         }
 
         var outageQuery = await _outageRepository.GetQueryableAsync();
-        var outages = await _asyncExecuter.ToListAsync(
-            outageQuery
-                .Where(o => o.StartedAt <= nowUtc && (o.EndedAt == null || o.EndedAt >= window30Start)));
+        var outages = await outageQuery
+            .Where(o => o.StartedAt <= nowUtc && (o.EndedAt == null || o.EndedAt >= window30Start))
+            .ToListAsync();
 
         var downtime24 = SumDowntime(outages, window24Start, nowUtc, nowUtc);
         var downtime7 = SumDowntime(outages, window7Start, nowUtc, nowUtc);
@@ -135,24 +133,24 @@ public class DashboardAppService : ApplicationService, IDashboardAppService
             query = query.Where(t => t.CurrentStatus == status);
         }
 
-        var totalCount = await _asyncExecuter.CountAsync(query);
+        var totalCount = await query.CountAsync();
 
         var skipCount = input.SkipCount < 0 ? 0 : input.SkipCount;
         var maxResultCount = input.MaxResultCount > 0 ? Math.Min(input.MaxResultCount, 100) : 20;
 
         var sortedQuery = ApplySorting(query, input.Sorting);
 
-        var targetData = await _asyncExecuter.ToListAsync(
-            sortedQuery
-                .Skip(skipCount)
-                .Take(maxResultCount)
-                .Select(t => new
-                {
-                    t.Id,
-                    t.Name,
-                    t.Type,
-                    t.CurrentStatus
-                }));
+        var targetData = await sortedQuery
+            .Skip(skipCount)
+            .Take(maxResultCount)
+            .Select(t => new
+            {
+                t.Id,
+                t.Name,
+                t.Type,
+                t.CurrentStatus
+            })
+            .ToListAsync();
 
         if (targetData.Count == 0)
         {
@@ -162,22 +160,22 @@ public class DashboardAppService : ApplicationService, IDashboardAppService
         var targetIds = targetData.Select(t => t.Id).ToList();
 
         var outageQuery = await _outageRepository.GetQueryableAsync();
-        var outages = await _asyncExecuter.ToListAsync(
-            outageQuery
-                .Where(o => targetIds.Contains(o.TargetId))
-                .Where(o => o.StartedAt <= nowUtc && (o.EndedAt == null || o.EndedAt >= window30Start)));
+        var outages = await outageQuery
+            .Where(o => targetIds.Contains(o.TargetId))
+            .Where(o => o.StartedAt <= nowUtc && (o.EndedAt == null || o.EndedAt >= window30Start))
+            .ToListAsync();
 
         var outagesByTarget = outages
             .GroupBy(o => o.TargetId)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(o => o.StartedAt).ToList());
 
         var historyQuery = await _historyRepository.GetQueryableAsync();
-        var historyEntries = await _asyncExecuter.ToListAsync(
-            historyQuery
-                .Where(h => targetIds.Contains(h.TargetId))
-                .Where(h => h.ChangedAt >= window30Start)
-                .OrderByDescending(h => h.ChangedAt)
-                .Select(h => new { h.TargetId, h.ToStatus, h.ChangedAt }));
+        var historyEntries = await historyQuery
+            .Where(h => targetIds.Contains(h.TargetId))
+            .Where(h => h.ChangedAt >= window30Start)
+            .OrderByDescending(h => h.ChangedAt)
+            .Select(h => new { h.TargetId, h.ToStatus, h.ChangedAt })
+            .ToListAsync();
 
         var lastOnlineLookup = historyEntries
             .Where(entry => entry.ToStatus == ServiceStatus.Online)

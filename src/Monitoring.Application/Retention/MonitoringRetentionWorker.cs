@@ -5,13 +5,13 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Monitoring.Options;
 using Monitoring.Targets;
 using Volo.Abp.Domain.Repositories;
-using Volo.Abp.Linq;
 using Volo.Abp.Timing;
 
 namespace Monitoring.Retention;
@@ -24,7 +24,6 @@ public sealed class MonitoringRetentionWorker : BackgroundService
     private readonly IClock _clock;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
-    private readonly IAsyncQueryableExecuter _asyncExecuter;
     private readonly IOptionsMonitor<MonitoringRetentionOptions> _options;
 
     public MonitoringRetentionWorker(
@@ -32,14 +31,12 @@ public sealed class MonitoringRetentionWorker : BackgroundService
         IClock clock,
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
-        IAsyncQueryableExecuter asyncExecuter,
         IOptionsMonitor<MonitoringRetentionOptions> options)
     {
         _logger = logger;
         _clock = clock;
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
-        _asyncExecuter = asyncExecuter;
         _options = options;
     }
 
@@ -137,19 +134,18 @@ public sealed class MonitoringRetentionWorker : BackgroundService
     private async Task<int> PurgeHistoryByAgeAsync(DateTime cutoffUtc, int batchSize, CancellationToken ct)
     {
         var total = 0;
-        var queryable = await _historyRepository.GetQueryableAsync();
-
         while (true)
         {
             ct.ThrowIfCancellationRequested();
 
-            var ids = await _asyncExecuter.ToListAsync(
-                queryable
-                    .Where(history => history.ChangedAt < cutoffUtc)
-                    .OrderBy(history => history.ChangedAt)
-                    .Select(history => history.Id)
-                    .Take(batchSize),
-                ct);
+            var queryable = await _historyRepository.GetQueryableAsync();
+
+            var ids = await queryable
+                .Where(history => history.ChangedAt < cutoffUtc)
+                .OrderBy(history => history.ChangedAt)
+                .Select(history => history.Id)
+                .Take(batchSize)
+                .ToListAsync(ct);
 
             if (ids.Count == 0)
             {
@@ -178,12 +174,11 @@ public sealed class MonitoringRetentionWorker : BackgroundService
         var total = 0;
         var queryable = await _historyRepository.GetQueryableAsync();
 
-        var overTargets = await _asyncExecuter.ToListAsync(
-            queryable
-                .GroupBy(history => history.TargetId)
-                .Select(group => new { TargetId = group.Key, Count = group.Count() })
-                .Where(result => result.Count > maxPerTarget),
-            ct);
+        var overTargets = await queryable
+            .GroupBy(history => history.TargetId)
+            .Select(group => new { TargetId = group.Key, Count = group.Count() })
+            .Where(result => result.Count > maxPerTarget)
+            .ToListAsync(ct);
 
         foreach (var target in overTargets)
         {
@@ -195,13 +190,14 @@ public sealed class MonitoringRetentionWorker : BackgroundService
                 ct.ThrowIfCancellationRequested();
 
                 var take = Math.Min(removable, batchSize);
-                var ids = await _asyncExecuter.ToListAsync(
-                    queryable
-                        .Where(history => history.TargetId == target.TargetId)
-                        .OrderBy(history => history.ChangedAt)
-                        .Select(history => history.Id)
-                        .Take(take),
-                    ct);
+                var queryable = await _historyRepository.GetQueryableAsync();
+
+                var ids = await queryable
+                    .Where(history => history.TargetId == target.TargetId)
+                    .OrderBy(history => history.ChangedAt)
+                    .Select(history => history.Id)
+                    .Take(take)
+                    .ToListAsync(ct);
 
                 if (ids.Count == 0)
                 {
@@ -229,32 +225,30 @@ public sealed class MonitoringRetentionWorker : BackgroundService
         var keep = Math.Max(0, keepPerTarget);
         var queryable = await _outageRepository.GetQueryableAsync();
 
-        var targetIds = await _asyncExecuter.ToListAsync(
-            queryable
-                .Where(outage => outage.EndedAt != null && outage.EndedAt < cutoffUtc)
-                .Select(outage => outage.TargetId)
-                .Distinct(),
-            ct);
+        var targetIds = await queryable
+            .Where(outage => outage.EndedAt != null && outage.EndedAt < cutoffUtc)
+            .Select(outage => outage.TargetId)
+            .Distinct()
+            .ToListAsync(ct);
 
         foreach (var targetId in targetIds)
         {
             ct.ThrowIfCancellationRequested();
 
             List<Guid> keepIds = keep > 0
-                ? await _asyncExecuter.ToListAsync(
-                    queryable
-                        .Where(outage => outage.TargetId == targetId)
-                        .OrderByDescending(outage => outage.StartedAt)
-                        .Take(keep)
-                        .Select(outage => outage.Id),
-                    ct)
+                ? await (await _outageRepository.GetQueryableAsync())
+                    .Where(outage => outage.TargetId == targetId)
+                    .OrderByDescending(outage => outage.StartedAt)
+                    .Take(keep)
+                    .Select(outage => outage.Id)
+                    .ToListAsync(ct)
                 : new List<Guid>();
 
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
 
-                var candidateQuery = queryable
+                var candidateQuery = (await _outageRepository.GetQueryableAsync())
                     .Where(outage => outage.TargetId == targetId && outage.EndedAt != null && outage.EndedAt < cutoffUtc);
 
                 if (keepIds.Count > 0)
@@ -262,12 +256,11 @@ public sealed class MonitoringRetentionWorker : BackgroundService
                     candidateQuery = candidateQuery.Where(outage => !keepIds.Contains(outage.Id));
                 }
 
-                var ids = await _asyncExecuter.ToListAsync(
-                    candidateQuery
-                        .OrderBy(outage => outage.StartedAt)
-                        .Select(outage => outage.Id)
-                        .Take(batchSize),
-                    ct);
+                var ids = await candidateQuery
+                    .OrderBy(outage => outage.StartedAt)
+                    .Select(outage => outage.Id)
+                    .Take(batchSize)
+                    .ToListAsync(ct);
 
                 if (ids.Count == 0)
                 {

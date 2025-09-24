@@ -3,13 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using Monitoring.Permissions;
 using Monitoring.Targets;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Repositories;
-using Volo.Abp.Linq;
 using Volo.Abp.Validation;
 
 namespace Monitoring.History;
@@ -20,18 +20,15 @@ public class HistoryAppService : ApplicationService, IHistoryAppService
     private readonly IRepository<MonitoringTarget, Guid> _targetRepository;
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
-    private readonly IAsyncQueryableExecuter _asyncExecuter;
 
     public HistoryAppService(
         IRepository<MonitoringTarget, Guid> targetRepository,
         IRepository<ServiceStatusHistory, Guid> historyRepository,
-        IRepository<OutageWindow, Guid> outageRepository,
-        IAsyncQueryableExecuter asyncExecuter)
+        IRepository<OutageWindow, Guid> outageRepository)
     {
         _targetRepository = targetRepository;
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
-        _asyncExecuter = asyncExecuter;
     }
 
     public async Task<OutageListDto> GetOutagesAsync(Guid id, int? count, CancellationToken cancellationToken)
@@ -42,12 +39,11 @@ public class HistoryAppService : ApplicationService, IHistoryAppService
 
         var outageQueryable = await _outageRepository.GetQueryableAsync();
 
-        var outages = await _asyncExecuter.ToListAsync(
-            outageQueryable
-                .Where(o => o.TargetId == id)
-                .OrderByDescending(o => o.StartedAt)
-                .Take(normalizedCount),
-            cancellationToken);
+        var outages = await outageQueryable
+            .Where(o => o.TargetId == id)
+            .OrderByDescending(o => o.StartedAt)
+            .Take(normalizedCount)
+            .ToListAsync(cancellationToken);
 
         if (outages.Count == 0)
         {
@@ -59,12 +55,11 @@ public class HistoryAppService : ApplicationService, IHistoryAppService
         var minStart = outages.Min(o => o.StartedAt);
 
         var historyQueryable = await _historyRepository.GetQueryableAsync();
-        var historyEntries = await _asyncExecuter.ToListAsync(
-            historyQueryable
-                .Where(h => h.TargetId == id)
-                .Where(h => h.ChangedAt >= minStart && h.ChangedAt <= maxEnd)
-                .OrderBy(h => h.ChangedAt),
-            cancellationToken);
+        var historyEntries = await historyQueryable
+            .Where(h => h.TargetId == id)
+            .Where(h => h.ChangedAt >= minStart && h.ChangedAt <= maxEnd)
+            .OrderBy(h => h.ChangedAt)
+            .ToListAsync(cancellationToken);
 
         var historyWithReason = historyEntries
             .Where(h => !string.IsNullOrWhiteSpace(h.ErrorSummary))
@@ -134,17 +129,15 @@ public class HistoryAppService : ApplicationService, IHistoryAppService
         var historyQueryable = await _historyRepository.GetQueryableAsync();
         historyQueryable = historyQueryable.Where(h => h.TargetId == id);
 
-        var previousChange = await _asyncExecuter.FirstOrDefaultAsync(
-            historyQueryable
-                .Where(h => h.ChangedAt < fromUtc)
-                .OrderByDescending(h => h.ChangedAt),
-            cancellationToken);
+        var previousChange = await historyQueryable
+            .Where(h => h.ChangedAt < fromUtc)
+            .OrderByDescending(h => h.ChangedAt)
+            .FirstOrDefaultAsync(cancellationToken);
 
-        var rangeChanges = await _asyncExecuter.ToListAsync(
-            historyQueryable
-                .Where(h => h.ChangedAt >= fromUtc && h.ChangedAt <= toUtc)
-                .OrderBy(h => h.ChangedAt),
-            cancellationToken);
+        var rangeChanges = await historyQueryable
+            .Where(h => h.ChangedAt >= fromUtc && h.ChangedAt <= toUtc)
+            .OrderBy(h => h.ChangedAt)
+            .ToListAsync(cancellationToken);
 
         var initialStatus = previousChange?.ToStatus ?? target.CurrentStatus;
 
@@ -156,9 +149,9 @@ public class HistoryAppService : ApplicationService, IHistoryAppService
     private async Task<MonitoringTarget> EnsureTargetExistsAsync(Guid id, CancellationToken cancellationToken)
     {
         var targetQueryable = await _targetRepository.GetQueryableAsync();
-        var target = await _asyncExecuter.FirstOrDefaultAsync(
-            targetQueryable.Where(t => t.Id == id),
-            cancellationToken);
+        var target = await targetQueryable
+            .Where(t => t.Id == id)
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (target == null)
         {
