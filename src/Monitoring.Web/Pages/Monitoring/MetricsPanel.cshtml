@@ -1,0 +1,23 @@
+@model Monitoring.Web.Pages.Monitoring.IndexModel
+
+<div class="card shadow-sm h-100" id="monitoring-metrics-panel" data-refresh-interval="10000">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Execution metrics</span>
+        <small class="text-muted" id="monitoring-metrics-generated">—</small>
+    </div>
+    <div class="card-body">
+        <dl class="row mb-0 small">
+            <dt class="col-7 text-muted">Checks started</dt>
+            <dd class="col-5 text-end fw-semibold" id="monitoring-metrics-started">0</dd>
+            <dt class="col-7 text-muted">Checks succeeded</dt>
+            <dd class="col-5 text-end fw-semibold" id="monitoring-metrics-succeeded">0</dd>
+            <dt class="col-7 text-muted">Checks failed</dt>
+            <dd class="col-5 text-end fw-semibold" id="monitoring-metrics-failed">0</dd>
+            <dt class="col-7 text-muted">Checks skipped</dt>
+            <dd class="col-5 text-end fw-semibold" id="monitoring-metrics-skipped">0</dd>
+            <dt class="col-7 text-muted">Lock contentions</dt>
+            <dd class="col-5 text-end fw-semibold" id="monitoring-metrics-locks">0</dd>
+        </dl>
+        <p class="text-muted small mb-0 mt-3">Updated every 10 seconds.</p>
+    </div>
+</div>

@@ -112,6 +112,8 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
             b.HasIndex("IsActive");
             b.HasIndex("IsActive", "NextDueAt")
                 .HasDatabaseName("IX_MonitoringTargets_IsActive_NextDueAt");
+            b.HasIndex("Type", "IsActive")
+                .HasDatabaseName("IX_MonitoringTargets_Type_IsActive");
 
             b.ToTable("MonitoringTargets", (string)null);
         });
@@ -150,6 +152,9 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
             b.Property<bool>("IsDeleted")
                 .HasColumnType("bit")
                 .HasDefaultValue(false);
+
+            b.Property<bool>("IsGlobal")
+                .HasColumnType("bit");
 
             b.Property<DateTime?>("LastModificationTime")
                 .HasColumnType("datetime2");
@@ -229,8 +234,11 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
 
             b.HasKey("Id");
 
+            b.HasIndex("IsGlobal", "StartUtc", "EndUtc")
+                .HasDatabaseName("IX_MonitoringMaintenance_Global_Start_End");
+
             b.HasIndex("TargetId", "StartUtc", "EndUtc")
-                .HasDatabaseName("IX_Target_Start_End");
+                .HasDatabaseName("IX_MonitoringMaintenance_Target_Start_End");
 
             b.ToTable("MonitoringMaintenance", (string)null);
         });
@@ -265,8 +273,11 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
             b.HasKey("Id");
 
             b.HasIndex("TargetId", "StartedAt")
-                .HasDatabaseName("IX_Target_StartedAt")
+                .HasDatabaseName("IX_MonitoringOutages_Target_Start")
                 .IsDescending(true, true);
+
+            b.HasIndex("TargetId", "EndedAt")
+                .HasDatabaseName("IX_MonitoringOutages_Target_End");
 
             b.ToTable("MonitoringOutages", (string)null);
 
@@ -302,6 +313,12 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
                 .IsUnique();
 
             b.ToTable("MonitoringRunLocks", (string)null);
+
+            b.HasOne("Monitoring.Targets.MonitoringTarget", null)
+                .WithMany()
+                .HasForeignKey("TargetId")
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired();
         });
 
         modelBuilder.Entity("Monitoring.Targets.ServiceStatusHistory", b =>
@@ -336,8 +353,7 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
             b.HasKey("Id");
 
             b.HasIndex("TargetId", "ChangedAt")
-                .HasDatabaseName("IX_Target_ChangedAt")
-                .IsDescending(true, true);
+                .HasDatabaseName("IX_MonitoringStatusHistory_Target_ChangedAt");
 
             b.ToTable("MonitoringStatusHistory", (string)null);
 
@@ -353,7 +369,7 @@ partial class HRSDataIntegrationDbContextModelSnapshot : ModelSnapshot
             b.HasOne("Monitoring.Targets.MonitoringTarget", null)
                 .WithOne()
                 .HasForeignKey("Monitoring.Targets.AlertPolicy", "TargetId")
-                .OnDelete(DeleteBehavior.Cascade)
+                .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired();
         });
 

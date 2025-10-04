@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Monitoring.Options;
@@ -18,7 +19,6 @@ public sealed class MonitoringRetentionManager
 {
     private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
-    private readonly IAsyncQueryableExecuter _asyncExecuter;
     private readonly IClock _clock;
     private readonly MonitoringOptions _options;
     private readonly ExecutionMetrics _metrics;
@@ -27,7 +27,6 @@ public sealed class MonitoringRetentionManager
     public MonitoringRetentionManager(
         IRepository<ServiceStatusHistory, Guid> historyRepository,
         IRepository<OutageWindow, Guid> outageRepository,
-        IAsyncQueryableExecuter asyncExecuter,
         IClock clock,
         IOptions<MonitoringOptions> options,
         ExecutionMetrics metrics,
@@ -35,7 +34,6 @@ public sealed class MonitoringRetentionManager
     {
         _historyRepository = historyRepository;
         _outageRepository = outageRepository;
-        _asyncExecuter = asyncExecuter;
         _clock = clock;
         _options = options.Value;
         _metrics = metrics;
@@ -74,17 +72,16 @@ public sealed class MonitoringRetentionManager
     {
         var batchSize = _options.Retention.PurgeBatchSize;
         var total = 0;
-        var queryable = await _historyRepository.GetQueryableAsync();
-
         while (true)
         {
-            var ids = await _asyncExecuter.ToListAsync(
-                queryable
-                    .Where(x => x.ChangedAt < cutoff)
-                    .OrderBy(x => x.ChangedAt)
-                    .Select(x => x.Id)
-                    .Take(batchSize),
-                cancellationToken);
+            var queryable = await _historyRepository.GetQueryableAsync();
+
+            var ids = await queryable
+                .Where(x => x.ChangedAt < cutoff)
+                .OrderBy(x => x.ChangedAt)
+                .Select(x => x.Id)
+                .Take(batchSize)
+                .ToListAsync(cancellationToken);
 
             if (ids.Count == 0)
             {
@@ -110,26 +107,26 @@ public sealed class MonitoringRetentionManager
         var total = 0;
         var queryable = await _historyRepository.GetQueryableAsync();
 
-        var overTargets = await _asyncExecuter.ToListAsync(
-            queryable
-                .GroupBy(x => x.TargetId)
-                .Select(g => new { TargetId = g.Key, Count = g.Count() })
-                .Where(x => x.Count > maxPerTarget),
-            cancellationToken);
+        var overTargets = await queryable
+            .GroupBy(x => x.TargetId)
+            .Select(g => new { TargetId = g.Key, Count = g.Count() })
+            .Where(x => x.Count > maxPerTarget)
+            .ToListAsync(cancellationToken);
 
         foreach (var target in overTargets)
         {
             var removable = Math.Max(0, target.Count - maxPerTarget);
             while (removable > 0)
             {
-                var ids = await _asyncExecuter.ToListAsync(
-                    queryable
-                        .Where(x => x.TargetId == target.TargetId)
-                        .OrderByDescending(x => x.ChangedAt)
-                        .Skip(maxPerTarget)
-                        .Take(Math.Min(removable, batchSize))
-                        .Select(x => x.Id),
-                    cancellationToken);
+                var queryable = await _historyRepository.GetQueryableAsync();
+
+                var ids = await queryable
+                    .Where(x => x.TargetId == target.TargetId)
+                    .OrderByDescending(x => x.ChangedAt)
+                    .Skip(maxPerTarget)
+                    .Take(Math.Min(removable, batchSize))
+                    .Select(x => x.Id)
+                    .ToListAsync(cancellationToken);
 
                 if (ids.Count == 0)
                 {
@@ -158,11 +155,10 @@ public sealed class MonitoringRetentionManager
         var total = 0;
         var queryable = await _outageRepository.GetQueryableAsync();
 
-        var counts = await _asyncExecuter.ToListAsync(
-            queryable
-                .GroupBy(x => x.TargetId)
-                .Select(g => new { TargetId = g.Key, Count = g.Count() }),
-            cancellationToken);
+        var counts = await queryable
+            .GroupBy(x => x.TargetId)
+            .Select(g => new { TargetId = g.Key, Count = g.Count() })
+            .ToListAsync(cancellationToken);
 
         foreach (var target in counts)
         {
@@ -174,13 +170,14 @@ public sealed class MonitoringRetentionManager
 
             while (removable > 0)
             {
-                var ids = await _asyncExecuter.ToListAsync(
-                    queryable
-                        .Where(x => x.TargetId == target.TargetId && x.EndedAt != null && x.EndedAt < cutoff)
-                        .OrderBy(x => x.EndedAt)
-                        .Take(Math.Min(removable, batchSize))
-                        .Select(x => x.Id),
-                    cancellationToken);
+                var queryable = await _outageRepository.GetQueryableAsync();
+
+                var ids = await queryable
+                    .Where(x => x.TargetId == target.TargetId && x.EndedAt != null && x.EndedAt < cutoff)
+                    .OrderBy(x => x.EndedAt)
+                    .Take(Math.Min(removable, batchSize))
+                    .Select(x => x.Id)
+                    .ToListAsync(cancellationToken);
 
                 if (ids.Count == 0)
                 {

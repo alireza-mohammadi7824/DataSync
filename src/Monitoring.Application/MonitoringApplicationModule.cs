@@ -5,6 +5,8 @@ using Monitoring.Alerts;
 using Monitoring.Execution;
 using Monitoring.HealthChecks;
 using Monitoring.Options;
+using Monitoring.Observability;
+using Monitoring.Retention;
 using Monitoring.Workers;
 using Microsoft.Extensions.Options;
 using Volo.Abp;
@@ -34,20 +36,31 @@ public class MonitoringApplicationModule : AbpModule
         context.Services.AddTransient<RedisCheckProvider>();
         context.Services.AddTransient<IHealthCheckProviderResolver, HealthCheckProviderResolver>();
         context.Services.AddTransient<INotificationChannelResolver, NotificationChannelResolver>();
+        context.Services.AddTransient<Monitoring.Alerts.Delivery.INotificationChannel, Monitoring.Alerts.Delivery.EmailNotificationChannel>();
+        context.Services.AddTransient<Monitoring.Alerts.Delivery.INotificationChannel, Monitoring.Alerts.Delivery.SmsNotificationChannel>();
+        context.Services.AddTransient<Monitoring.Alerts.Delivery.INotificationChannel, Monitoring.Alerts.Delivery.WebhookNotificationChannel>();
+        context.Services.AddSingleton<Monitoring.Alerts.Delivery.NotificationChannelResolver>();
+        context.Services.AddSingleton<AlertDispatcher>();
         context.Services.TryAddSingleton<ExecutionMetrics>();
+        context.Services.TryAddSingleton<MonitoringMetrics>();
         context.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
+        context.Services.AddSingleton<IValidateOptions<MonitoringExecutionOptions>, MonitoringExecutionOptionsValidator>();
+        context.Services.AddSingleton<IValidateOptions<MonitoringRetentionOptions>, MonitoringRetentionOptionsValidator>();
+        context.Services.AddSingleton<IValidateOptions<MonitoringAlertsOptions>, MonitoringAlertsOptionsValidator>();
         context.Services.AddTransient<HealthCheckExecutor>();
         context.Services.AddTransient<IMonitoringCheckService, MonitoringCheckService>();
-        context.Services.AddSingleton<MonitoringRetentionManager>();
         context.Services.AddSingleton<BulkCheckQueue>();
         context.Services.AddSingleton<IBulkCheckQueue>(sp => sp.GetRequiredService<BulkCheckQueue>());
         context.Services.AddSingleton<ITargetRunLock, DatabaseTargetRunLock>();
         context.Services.AddHostedService<MonitoringWorker>();
         context.Services.AddHostedService<BulkCheckProcessor>();
-        context.Services.AddHostedService<PurgeWorker>();
+        context.Services.AddHostedService<MonitoringRetentionWorker>();
 
         var configuration = context.Services.GetConfiguration();
         Configure<MonitoringOptions>(configuration.GetSection("Monitoring"));
+        Configure<MonitoringExecutionOptions>(configuration.GetSection("Monitoring:Execution"));
+        Configure<MonitoringRetentionOptions>(configuration.GetSection("Monitoring:Retention"));
+        Configure<MonitoringAlertsOptions>(configuration.GetSection("Monitoring:Alerts"));
 
         Configure<AbpAutoMapperOptions>(options =>
         {

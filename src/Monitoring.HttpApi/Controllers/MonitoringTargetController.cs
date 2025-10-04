@@ -1,11 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Monitoring.Execution;
+using Monitoring.History;
+using Volo.Abp.Http;
 using Volo.Abp;
 using Volo.Abp.Application.Dtos;
+using Volo.Abp.Validation;
 using Monitoring.Permissions;
 
 namespace Monitoring.Targets;
@@ -18,10 +23,14 @@ namespace Monitoring.Targets;
 public class MonitoringTargetController : MonitoringController
 {
     private readonly IMonitoringTargetAppService _monitoringTargetAppService;
+    private readonly IHistoryAppService _historyAppService;
 
-    public MonitoringTargetController(IMonitoringTargetAppService monitoringTargetAppService)
+    public MonitoringTargetController(
+        IMonitoringTargetAppService monitoringTargetAppService,
+        IHistoryAppService historyAppService)
     {
         _monitoringTargetAppService = monitoringTargetAppService;
+        _historyAppService = historyAppService;
     }
 
     [HttpGet]
@@ -49,9 +58,9 @@ public class MonitoringTargetController : MonitoringController
 
     [HttpGet]
     [Route("{id}/outages")]
-    public virtual Task<List<OutageWindowDto>> GetRecentOutagesAsync(Guid id, [FromQuery] int count = 10)
+    public virtual Task<OutageListDto> GetOutagesAsync(Guid id, [FromQuery] int? count, CancellationToken cancellationToken)
     {
-        return _monitoringTargetAppService.GetRecentOutagesAsync(id, count);
+        return _historyAppService.GetOutagesAsync(id, count, cancellationToken);
     }
 
     [HttpGet]
@@ -71,10 +80,15 @@ public class MonitoringTargetController : MonitoringController
     }
 
     [HttpGet]
-    [Route("{id}/history")]
-    public virtual Task<List<ServiceStatusHistoryDto>> GetRecentStatusHistoryAsync(Guid id, [FromQuery] int count = 20)
+    [Route("{id}/timeline")]
+    public virtual Task<TimelineDto> GetTimelineAsync(Guid id, [FromQuery] TimelineRequestDto? input, CancellationToken cancellationToken)
     {
-        return _monitoringTargetAppService.GetRecentStatusHistoryAsync(id, count);
+        if (input == null)
+        {
+            throw new AbpValidationException("Timeline request is required.");
+        }
+
+        return _historyAppService.GetTimelineAsync(id, input, cancellationToken);
     }
 
     [HttpPost]
@@ -154,10 +168,4 @@ public class MonitoringTargetController : MonitoringController
         return _monitoringTargetAppService.GetCheckBatchStatusAsync(id);
     }
 
-    [HttpGet]
-    [Route("~/api/monitoring/metrics")]
-    public virtual Task<MonitoringMetricsDto> GetMetricsAsync()
-    {
-        return _monitoringTargetAppService.GetMetricsAsync();
-    }
 }

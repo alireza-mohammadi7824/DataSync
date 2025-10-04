@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.DataAnnotations.Schema;
 using Volo.Abp;
 using Volo.Abp.Domain.Entities.Auditing;
 
@@ -19,6 +20,15 @@ public class MonitoringTarget : FullAuditedAggregateRoot<Guid>
     public string? Category { get; private set; }
     public bool IsActive { get; private set; }
     public ServiceStatus CurrentStatus { get; private set; }
+
+    public MonitoringTargetServiceType ServiceType
+    {
+        get => (MonitoringTargetServiceType)Type;
+        set => SetType((ServiceType)value);
+    }
+
+    [NotMapped]
+    public string ServiceTypeName => ServiceType.ToString();
     public DateTime? LastCheckedAt { get; private set; }
     public DateTime? LastStatusChangeAt { get; private set; }
     public DateTime NextDueAt { get; private set; }

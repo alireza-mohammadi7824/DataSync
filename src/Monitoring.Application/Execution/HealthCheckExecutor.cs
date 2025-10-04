@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Monitoring.HealthChecks;
 using Monitoring.Options;
+using Monitoring.Observability;
 using Monitoring.Targets;
 using Volo.Abp.Timing;
 
@@ -14,28 +15,30 @@ namespace Monitoring.Execution;
 public sealed class HealthCheckExecutor
 {
     private const int DefaultTimeoutSeconds = 5;
-    private const int BackoffCapSeconds = 30;
 
     private readonly IHealthCheckProviderResolver _providerResolver;
     private readonly ITargetRunLock _runLock;
     private readonly IClock _clock;
-    private readonly MonitoringOptions _options;
+    private readonly IOptionsMonitor<MonitoringExecutionOptions> _executionOptions;
     private readonly ExecutionMetrics _metrics;
+    private readonly MonitoringMetrics _monitoringMetrics;
     private readonly ILogger<HealthCheckExecutor> _logger;
 
     public HealthCheckExecutor(
         IHealthCheckProviderResolver providerResolver,
         ITargetRunLock runLock,
         IClock clock,
-        IOptions<MonitoringOptions> options,
+        IOptionsMonitor<MonitoringExecutionOptions> executionOptions,
         ExecutionMetrics metrics,
+        MonitoringMetrics monitoringMetrics,
         ILogger<HealthCheckExecutor> logger)
     {
         _providerResolver = providerResolver;
         _runLock = runLock;
         _clock = clock;
-        _options = options.Value;
+        _executionOptions = executionOptions;
         _metrics = metrics;
+        _monitoringMetrics = monitoringMetrics;
         _logger = logger;
     }
 
@@ -44,18 +47,22 @@ public sealed class HealthCheckExecutor
         string triggerSource,
         CancellationToken cancellationToken)
     {
-        var timeoutSeconds = ResolveTimeoutSeconds(target);
-        var skipWindow = TimeSpan.FromSeconds(timeoutSeconds + Math.Max(5, _options.Execution.LockTtlBufferSeconds));
-        var ttlSeconds = (timeoutSeconds * 2) + Math.Max(0, _options.Execution.LockTtlBufferSeconds);
+        var options = _executionOptions.CurrentValue;
+        var timeoutSeconds = ResolveTimeoutSeconds(target, options);
+        var lockBufferSeconds = Math.Max(0, options.LockTtlBufferSeconds);
+        var skipWindow = TimeSpan.FromSeconds(timeoutSeconds + Math.Max(5, lockBufferSeconds));
+        var ttlSeconds = (timeoutSeconds * 2) + lockBufferSeconds;
         var ttl = TimeSpan.FromSeconds(ttlSeconds);
 
         await using var handle = await _runLock.TryAcquireAsync(target.Id, ttl, cancellationToken);
         if (handle == null)
         {
             _metrics.IncrementChecksSkipped();
-            _logger.LogInformation(
-                "Skipping check for target {TargetId} because the run lock is held by another node",
-                target.Id);
+            _metrics.IncrementLocksContended();
+            _monitoringMetrics.IncChecksSkipped();
+            _monitoringMetrics.IncLocksContended();
+            _logger.LogInformation("check_lock_contended {@evt}", new { TargetId = target.Id });
+            _logger.LogInformation("check_skip {@evt}", new { TargetId = target.Id, Reason = "Lock" });
             return HealthCheckExecutionResult.Skipped("Lock", triggerSource, _clock.Now);
         }
 
@@ -65,20 +72,34 @@ public sealed class HealthCheckExecutor
             now - target.LastCheckedAt.Value <= skipWindow)
         {
             _metrics.IncrementChecksSkipped();
-            _logger.LogInformation(
-                "Skipping check for target {TargetId} because a recent check is still in progress",
-                target.Id);
+            _monitoringMetrics.IncChecksSkipped();
+            _logger.LogInformation("check_skip {@evt}", new { TargetId = target.Id, Reason = "InProgress" });
             return HealthCheckExecutionResult.Skipped("InProgress", triggerSource, now);
         }
 
         _metrics.IncrementChecksStarted();
+        _monitoringMetrics.IncChecksStarted();
+        _logger.LogInformation(
+            "check_start {@evt}",
+            new
+            {
+                TargetId = target.Id,
+                target.Name,
+                target.ServiceType,
+                Trigger = triggerSource,
+                Attempt = 1,
+                TimeoutSeconds = timeoutSeconds
+            });
 
         var provider = _providerResolver.Resolve(target.Type);
-        var maxAttempts = Math.Max(1, target.MaxRetryAttempts + 1);
+        var allowedRetries = Math.Clamp(target.MaxRetryAttempts, 0, options.MaxRetryAttempts);
+        var maxAttempts = Math.Max(1, allowedRetries + 1);
         var timeout = TimeSpan.FromSeconds(timeoutSeconds);
         var baseDelaySeconds = Math.Max(1, target.RetryDelaySeconds);
+        var backoffCap = Math.Max(1, options.MaxBackoffSeconds);
 
         HealthCheckResult? lastResult = null;
+        var attemptsPerformed = 0;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -94,17 +115,22 @@ public sealed class HealthCheckExecutor
                 var responseMs = EnsureResponseTime(result.ResponseTimeMs, stopwatch.ElapsedMilliseconds);
                 result = result with { ResponseTimeMs = responseMs };
 
-                _logger.LogInformation(
-                    "Check attempt {Attempt} for target {TargetId} ({TriggerSource}) completed with outcome {Outcome} in {Duration}ms",
-                    attempt,
-                    target.Id,
-                    triggerSource,
-                    result.IsSuccess ? "Ok" : "Fail",
-                    responseMs);
+                attemptsPerformed = attempt;
 
                 if (result.IsSuccess)
                 {
                     _metrics.IncrementChecksSucceeded();
+                    _monitoringMetrics.IncChecksSucceeded();
+                    _logger.LogInformation(
+                        "check_ok {@evt}",
+                        new
+                        {
+                            TargetId = target.Id,
+                            target.Name,
+                            target.ServiceType,
+                            DurationMs = responseMs,
+                            Attempt = attempt
+                        });
                     return HealthCheckExecutionResult.Completed(result, _clock.Now, attempt);
                 }
 
@@ -115,22 +141,34 @@ public sealed class HealthCheckExecutor
                 stopwatch.Stop();
                 var responseMs = EnsureResponseTime(null, stopwatch.ElapsedMilliseconds);
                 lastResult = new HealthCheckResult(false, responseMs, $"Timeout {timeoutSeconds}s", triggerSource);
+                attemptsPerformed = attempt;
                 _logger.LogWarning(
-                    "Check attempt {Attempt} for target {TargetId} timed out after {Duration}ms",
-                    attempt,
-                    target.Id,
-                    responseMs);
+                    "check_fail_attempt {@evt}",
+                    new
+                    {
+                        TargetId = target.Id,
+                        Attempt = attempt,
+                        DurationMs = responseMs,
+                        Reason = "Timeout"
+                    });
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 stopwatch.Stop();
                 var responseMs = EnsureResponseTime(null, stopwatch.ElapsedMilliseconds);
                 lastResult = new HealthCheckResult(false, responseMs, "Check error", triggerSource);
-                _logger.LogWarning(ex,
-                    "Check attempt {Attempt} for target {TargetId} failed with an exception after {Duration}ms",
-                    attempt,
-                    target.Id,
-                    responseMs);
+                attemptsPerformed = attempt;
+                _logger.LogWarning(
+                    ex,
+                    "check_fail_attempt {@evt}",
+                    new
+                    {
+                        TargetId = target.Id,
+                        Attempt = attempt,
+                        DurationMs = responseMs,
+                        Reason = "Exception",
+                        ErrorType = ex.GetType().Name
+                    });
             }
 
             if (attempt >= maxAttempts)
@@ -138,7 +176,7 @@ public sealed class HealthCheckExecutor
                 break;
             }
 
-            var backoffSeconds = Math.Min(BackoffCapSeconds, baseDelaySeconds * (int)Math.Pow(2, attempt - 1));
+            var backoffSeconds = Math.Min(backoffCap, baseDelaySeconds * (int)Math.Pow(2, attempt - 1));
             var delay = TimeSpan.FromSeconds(backoffSeconds);
             _logger.LogDebug(
                 "Waiting {Delay}s before retrying target {TargetId} (attempt {Attempt}/{Max})",
@@ -151,7 +189,21 @@ public sealed class HealthCheckExecutor
         }
 
         _metrics.IncrementChecksFailed();
+        _monitoringMetrics.IncChecksFailed();
         lastResult ??= new HealthCheckResult(false, null, "Unknown failure", triggerSource);
+        var failureDuration = lastResult.ResponseTimeMs ?? 0;
+        var errorSummary = string.IsNullOrWhiteSpace(lastResult.ErrorSummary) ? "Unknown" : lastResult.ErrorSummary;
+        _logger.LogWarning(
+            "check_fail {@evt}",
+            new
+            {
+                TargetId = target.Id,
+                target.Name,
+                target.ServiceType,
+                DurationMs = failureDuration,
+                Attempt = attemptsPerformed == 0 ? maxAttempts : attemptsPerformed,
+                ErrorSummary = errorSummary
+            });
         return HealthCheckExecutionResult.Completed(lastResult, _clock.Now, maxAttempts);
     }
 
@@ -170,10 +222,10 @@ public sealed class HealthCheckExecutor
         return (int)Math.Min(elapsedMilliseconds, int.MaxValue);
     }
 
-    private int ResolveTimeoutSeconds(MonitoringTarget target)
+    private int ResolveTimeoutSeconds(MonitoringTarget target, MonitoringExecutionOptions options)
     {
         var timeout = target.TimeoutSeconds > 0 ? target.TimeoutSeconds : DefaultTimeoutSeconds;
-        if (_options.Execution.GlobalCheckTimeoutSeconds is { } global)
+        if (options.GlobalCheckTimeoutSeconds is { } global)
         {
             timeout = Math.Min(timeout, global);
         }
@@ -186,14 +238,14 @@ public sealed record HealthCheckExecutionResult
 {
     private HealthCheckExecutionResult(bool skipped, string? skipReason, HealthCheckResult result, DateTime completedAt, int attempts)
     {
-        Skipped = skipped;
+        IsSkipped = skipped;
         SkipReason = skipReason;
         Result = result;
         CompletedAt = completedAt;
         Attempts = attempts;
     }
 
-    public bool Skipped { get; }
+    public bool IsSkipped { get; }
 
     public string? SkipReason { get; }
 
@@ -203,13 +255,9 @@ public sealed record HealthCheckExecutionResult
 
     public int Attempts { get; }
 
-    public static HealthCheckExecutionResult Skipped(string reason, string triggerSource, DateTime timestamp)
-    {
-        return new HealthCheckExecutionResult(true, reason, new HealthCheckResult(false, null, reason, triggerSource), timestamp, 0);
-    }
+    public static HealthCheckExecutionResult Skipped(string reason, string triggerSource, DateTime completedAt)
+        => new(true, reason, new HealthCheckResult(false, null, reason, triggerSource), completedAt, 0);
 
-    public static HealthCheckExecutionResult Completed(HealthCheckResult result, DateTime timestamp, int attempts)
-    {
-        return new HealthCheckExecutionResult(false, null, result, timestamp, attempts);
-    }
+    public static HealthCheckExecutionResult Completed(HealthCheckResult result, DateTime completedAt, int attempts)
+        => new(false, null, result, completedAt, attempts);
 }

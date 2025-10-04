@@ -1,292 +1,289 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
-using Monitoring.Dashboard;
-using Monitoring.Options;
+using Microsoft.AspNetCore.Authorization;
 using Monitoring.Permissions;
 using Monitoring.Targets;
-using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Authorization;
 using Volo.Abp.Domain.Repositories;
 
 namespace Monitoring.Dashboard;
 
+[Authorize(MonitoringPermissions.Dashboard.View)]
 public class DashboardAppService : ApplicationService, IDashboardAppService
 {
-    private const int DefaultIncidentPageSize = 50;
-
     private readonly IRepository<MonitoringTarget, Guid> _targetRepository;
+    private readonly IRepository<ServiceStatusHistory, Guid> _historyRepository;
     private readonly IRepository<OutageWindow, Guid> _outageRepository;
-    private readonly MonitoringOptions _options;
 
     public DashboardAppService(
         IRepository<MonitoringTarget, Guid> targetRepository,
-        IRepository<OutageWindow, Guid> outageRepository,
-        IOptions<MonitoringOptions> options)
+        IRepository<ServiceStatusHistory, Guid> historyRepository,
+        IRepository<OutageWindow, Guid> outageRepository)
     {
         _targetRepository = targetRepository;
+        _historyRepository = historyRepository;
         _outageRepository = outageRepository;
-        _options = options.Value;
     }
 
-    public async Task<DashboardSummaryDto> GetSummaryAsync(DateTime from, DateTime to, ServiceType? filterType = null)
+    public virtual async Task<DashboardSummaryDto> GetSummaryAsync()
     {
-        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
-        var (rangeStart, rangeEnd) = NormalizeRange(from, to);
+        var nowUtc = Clock.Normalize(Clock.Now);
+
+        var window24Start = nowUtc.AddHours(-24);
+        var window7Start = nowUtc.AddDays(-7);
+        var window30Start = nowUtc.AddDays(-30);
 
         var targetQuery = await _targetRepository.GetQueryableAsync();
-        if (filterType.HasValue)
-        {
-            targetQuery = targetQuery.Where(t => t.Type == filterType.Value);
-        }
-
-        var targetSnapshots = await AsyncExecuter.ToListAsync(
-            targetQuery.Select(t => new
-            {
-                t.Id,
-                t.Type,
-                t.CurrentStatus
-            }));
+        var targetSnapshots = await targetQuery
+            .Select(t => new { t.Id, t.CurrentStatus })
+            .ToListAsync();
 
         var totalTargets = targetSnapshots.Count;
 
-        var result = new DashboardSummaryDto
+        var summary = new DashboardSummaryDto
         {
-            TotalTargets = totalTargets,
+            GeneratedAtUtc = nowUtc,
             OnlineCount = targetSnapshots.Count(t => t.CurrentStatus == ServiceStatus.Online),
             OfflineCount = targetSnapshots.Count(t => t.CurrentStatus == ServiceStatus.Offline),
             CheckingCount = targetSnapshots.Count(t => t.CurrentStatus == ServiceStatus.Checking),
-            RangeStart = rangeStart,
-            RangeEnd = rangeEnd
+            Uptime24h = 100d,
+            Uptime7d = 100d,
+            Uptime30d = 100d,
+            Mttr30d = 0d,
+            Mtbf30d = 0d
         };
 
         if (totalTargets == 0)
         {
-            result.UptimePercentage = 100;
-            result.IncidentsCount = 0;
-            return result;
+            return summary;
         }
-
-        var targetIds = targetSnapshots.Select(t => t.Id).ToList();
-        var outages = await LoadOutagesAsync(targetIds, rangeStart, rangeEnd);
-
-        var rangeSeconds = (rangeEnd - rangeStart).TotalSeconds;
-        if (rangeSeconds <= 0)
-        {
-            result.UptimePercentage = 100;
-            result.IncidentsCount = outages.Count;
-            return result;
-        }
-
-        var downtimeSeconds = outages.Sum(outage => DashboardMetricsHelper.CalculateOverlapSeconds(outage, rangeStart, rangeEnd));
-        var denominator = rangeSeconds * totalTargets;
-        var uptime = denominator <= 0 ? 1 : Math.Clamp(1 - (downtimeSeconds / denominator), 0, 1);
-        result.UptimePercentage = Math.Round(uptime * 100, 2);
-        result.IncidentsCount = outages.Count;
-        return result;
-    }
-
-    public async Task<List<UptimeBucketDto>> GetUptimeSeriesAsync(Guid targetId, DateTime from, DateTime to, string bucket = "day")
-    {
-        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
-        var (rangeStart, rangeEnd) = NormalizeRange(from, to);
-
-        var bucketLength = ResolveBucketLength(bucket);
-        var outages = await LoadOutagesAsync(new List<Guid> { targetId }, rangeStart, rangeEnd);
-
-        var buckets = new List<UptimeBucketDto>();
-        var cursor = rangeStart;
-        while (cursor < rangeEnd)
-        {
-            var bucketEnd = cursor.Add(bucketLength);
-            if (bucketEnd > rangeEnd)
-            {
-                bucketEnd = rangeEnd;
-            }
-
-            var bucketDuration = (bucketEnd - cursor).TotalSeconds;
-            double uptimePct = 100;
-            if (bucketDuration > 0)
-            {
-                var downtimeSeconds = outages.Sum(outage => DashboardMetricsHelper.CalculateOverlapSeconds(outage, cursor, bucketEnd));
-                var uptime = Math.Clamp(1 - (downtimeSeconds / bucketDuration), 0, 1);
-                uptimePct = Math.Round(uptime * 100, 2);
-            }
-
-            buckets.Add(new UptimeBucketDto
-            {
-                Start = cursor,
-                End = bucketEnd,
-                UptimePercentage = uptimePct
-            });
-
-            cursor = bucketEnd;
-        }
-
-        return buckets;
-    }
-
-    public async Task<List<DashboardIncidentDto>> GetIncidentsAsync(Guid targetId, DateTime from, DateTime to, int skip = 0, int max = 100)
-    {
-        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
-        var (rangeStart, rangeEnd) = NormalizeRange(from, to);
-        var sanitizedSkip = skip < 0 ? 0 : skip;
-        var sanitizedMax = max <= 0 ? DefaultIncidentPageSize : Math.Min(max, 500);
 
         var outageQuery = await _outageRepository.GetQueryableAsync();
-        outageQuery = outageQuery
-            .Where(o => o.TargetId == targetId)
-            .Where(o => o.StartedAt <= rangeEnd && (o.EndedAt == null || o.EndedAt >= rangeStart))
-            .OrderByDescending(o => o.StartedAt);
+        var outages = await outageQuery
+            .Where(o => o.StartedAt <= nowUtc && (o.EndedAt == null || o.EndedAt >= window30Start))
+            .ToListAsync();
 
-        var outages = await AsyncExecuter.ToListAsync(
-            outageQuery
-                .Skip(sanitizedSkip)
-                .Take(sanitizedMax));
+        var downtime24 = SumDowntime(outages, window24Start, nowUtc, nowUtc);
+        var downtime7 = SumDowntime(outages, window7Start, nowUtc, nowUtc);
+        var downtime30 = SumDowntime(outages, window30Start, nowUtc, nowUtc);
 
-        return outages
-            .Select(o => new DashboardIncidentDto
-            {
-                Id = o.Id,
-                TargetId = o.TargetId,
-                StartedAt = o.StartedAt,
-                EndedAt = o.EndedAt,
-                FailureCount = o.FailureCount,
-                TotalDurationSec = o.TotalDurationSec
-            })
-            .ToList();
-    }
+        var window24TotalSeconds = Math.Max(0d, (nowUtc - window24Start).TotalSeconds * totalTargets);
+        var window7TotalSeconds = Math.Max(0d, (nowUtc - window7Start).TotalSeconds * totalTargets);
+        var window30TotalSeconds = Math.Max(0d, (nowUtc - window30Start).TotalSeconds * totalTargets);
 
-    public async Task<MttrMtbfDto> GetReliabilityAsync(DateTime from, DateTime to, ServiceType? filterType = null)
-    {
-        await AuthorizationService.CheckAsync(MonitoringPermissions.Services.View);
-        var (rangeStart, rangeEnd) = NormalizeRange(from, to);
+        summary.Uptime24h = DashboardMetricsHelper.UptimePercent(TimeSpan.FromSeconds(window24TotalSeconds), TimeSpan.FromSeconds(downtime24));
+        summary.Uptime7d = DashboardMetricsHelper.UptimePercent(TimeSpan.FromSeconds(window7TotalSeconds), TimeSpan.FromSeconds(downtime7));
+        summary.Uptime30d = DashboardMetricsHelper.UptimePercent(TimeSpan.FromSeconds(window30TotalSeconds), TimeSpan.FromSeconds(downtime30));
 
-        var targetQuery = await _targetRepository.GetQueryableAsync();
-        if (filterType.HasValue)
-        {
-            targetQuery = targetQuery.Where(t => t.Type == filterType.Value);
-        }
-
-        var targetSnapshots = await AsyncExecuter.ToListAsync(
-            targetQuery.Select(t => new
-            {
-                t.Id,
-                t.Type
-            }));
-
-        var targetIds = targetSnapshots.Select(t => t.Id).ToList();
-        if (!targetIds.Any())
-        {
-            return new MttrMtbfDto();
-        }
-
-        var outages = await LoadOutagesAsync(targetIds, rangeStart, rangeEnd);
         var closedOutages = outages
-            .Where(o => o.EndedAt.HasValue)
+            .Where(o => o.EndedAt.HasValue && o.EndedAt.Value >= window30Start && o.EndedAt.Value <= nowUtc)
             .OrderBy(o => o.StartedAt)
             .ToList();
 
-        var result = new MttrMtbfDto();
-        if (!closedOutages.Any())
+        if (closedOutages.Count > 0)
         {
-            return result;
+            var mttrHours = closedOutages
+                .Select(o => (o.TotalDurationSec ?? (int)Math.Max(0, (o.EndedAt!.Value - o.StartedAt).TotalSeconds)) / 3600d)
+                .Where(duration => duration > 0d)
+                .ToList();
+
+            if (mttrHours.Count > 0)
+            {
+                summary.Mttr30d = Math.Round(mttrHours.Average(), 2);
+            }
         }
 
-        var mttr = DashboardMetricsHelper.CalculateMttrSeconds(closedOutages, rangeStart, rangeEnd);
-        if (mttr.HasValue)
-        {
-            result.MeanTimeToRecoverSeconds = mttr.Value;
-        }
-
-        var mtbfDurations = closedOutages
+        var mtbfHours = outages
+            .Where(o => o.StartedAt >= window30Start && o.StartedAt <= nowUtc)
             .GroupBy(o => o.TargetId)
-            .SelectMany(group => DashboardMetricsHelper.CalculateMtbfSeconds(group))
+            .SelectMany(group => CalculateIntervals(group.OrderBy(o => o.StartedAt).ToList()))
             .ToList();
 
-        if (mtbfDurations.Any())
+        if (mtbfHours.Count > 0)
         {
-            result.MeanTimeBetweenFailuresSeconds = Math.Round(mtbfDurations.Average(), 2);
+            summary.Mtbf30d = Math.Round(mtbfHours.Average(), 2);
         }
 
-        foreach (var serviceGrouping in targetSnapshots.GroupBy(t => t.Type))
+        return summary;
+    }
+
+    public virtual async Task<TargetDashboardListDto> GetTargetsAsync(TargetDashboardListInput input)
+    {
+        input ??= new TargetDashboardListInput();
+
+        var nowUtc = Clock.Normalize(Clock.Now);
+        var window24Start = nowUtc.AddHours(-24);
+        var window7Start = nowUtc.AddDays(-7);
+        var window30Start = nowUtc.AddDays(-30);
+
+        var query = await _targetRepository.GetQueryableAsync();
+
+        if (!string.IsNullOrWhiteSpace(input.ServiceType) && Enum.TryParse<ServiceType>(input.ServiceType, true, out var serviceType))
         {
-            var serviceTargetIds = serviceGrouping.Select(t => t.Id).ToHashSet();
-            var serviceOutages = closedOutages.Where(o => serviceTargetIds.Contains(o.TargetId)).ToList();
-            if (!serviceOutages.Any())
+            query = query.Where(t => t.Type == serviceType);
+        }
+
+        if (input.Status.HasValue)
+        {
+            var status = MapToServiceStatus(input.Status.Value);
+            query = query.Where(t => t.CurrentStatus == status);
+        }
+
+        var totalCount = await query.CountAsync();
+
+        var skipCount = input.SkipCount < 0 ? 0 : input.SkipCount;
+        var maxResultCount = input.MaxResultCount > 0 ? Math.Min(input.MaxResultCount, 100) : 20;
+
+        var sortedQuery = ApplySorting(query, input.Sorting);
+
+        var targetData = await sortedQuery
+            .Skip(skipCount)
+            .Take(maxResultCount)
+            .Select(t => new
             {
-                continue;
+                t.Id,
+                t.Name,
+                t.Type,
+                t.CurrentStatus
+            })
+            .ToListAsync();
+
+        if (targetData.Count == 0)
+        {
+            return new TargetDashboardListDto(totalCount, Array.Empty<TargetDashboardItemDto>());
+        }
+
+        var targetIds = targetData.Select(t => t.Id).ToList();
+
+        var outageQuery = await _outageRepository.GetQueryableAsync();
+        var outages = await outageQuery
+            .Where(o => targetIds.Contains(o.TargetId))
+            .Where(o => o.StartedAt <= nowUtc && (o.EndedAt == null || o.EndedAt >= window30Start))
+            .ToListAsync();
+
+        var outagesByTarget = outages
+            .GroupBy(o => o.TargetId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(o => o.StartedAt).ToList());
+
+        var historyQuery = await _historyRepository.GetQueryableAsync();
+        var historyEntries = await historyQuery
+            .Where(h => targetIds.Contains(h.TargetId))
+            .Where(h => h.ChangedAt >= window30Start)
+            .OrderByDescending(h => h.ChangedAt)
+            .Select(h => new { h.TargetId, h.ToStatus, h.ChangedAt })
+            .ToListAsync();
+
+        var lastOnlineLookup = historyEntries
+            .Where(entry => entry.ToStatus == ServiceStatus.Online)
+            .GroupBy(entry => entry.TargetId)
+            .ToDictionary(group => group.Key, group => group.Max(x => x.ChangedAt));
+
+        var window24 = nowUtc - window24Start;
+        var window7 = nowUtc - window7Start;
+        var window30 = nowUtc - window30Start;
+
+        var items = new List<TargetDashboardItemDto>(targetData.Count);
+
+        foreach (var target in targetData)
+        {
+            outagesByTarget.TryGetValue(target.Id, out var targetOutages);
+            targetOutages ??= new List<OutageWindow>();
+
+            var downtime24 = SumDowntime(targetOutages, window24Start, nowUtc, nowUtc);
+            var downtime7 = SumDowntime(targetOutages, window7Start, nowUtc, nowUtc);
+            var downtime30 = SumDowntime(targetOutages, window30Start, nowUtc, nowUtc);
+
+            var lastOutage = targetOutages.FirstOrDefault();
+            DateTime? lastOutageEndUtc = lastOutage?.EndedAt;
+
+            if (lastOutageEndUtc == null && lastOnlineLookup.TryGetValue(target.Id, out var lastOnline))
+            {
+                lastOutageEndUtc = lastOnline;
             }
 
-            var serviceMttr = DashboardMetricsHelper.CalculateMttrSeconds(serviceOutages, rangeStart, rangeEnd);
-            var serviceMtbfDurations = DashboardMetricsHelper.CalculateMtbfSeconds(serviceOutages);
-
-            result.Breakdown.Add(new MttrMtbfBreakdownDto
+            items.Add(new TargetDashboardItemDto
             {
-                ServiceType = serviceGrouping.Key,
-                MeanTimeToRecoverSeconds = serviceMttr,
-                MeanTimeBetweenFailuresSeconds = serviceMtbfDurations.Any()
-                    ? Math.Round(serviceMtbfDurations.Average(), 2)
-                    : null
+                Id = target.Id,
+                Name = target.Name,
+                ServiceType = target.Type.ToString(),
+                CurrentStatus = MapToDtoStatus(target.CurrentStatus),
+                Uptime24h = DashboardMetricsHelper.UptimePercent(window24, TimeSpan.FromSeconds(downtime24)),
+                Uptime7d = DashboardMetricsHelper.UptimePercent(window7, TimeSpan.FromSeconds(downtime7)),
+                Uptime30d = DashboardMetricsHelper.UptimePercent(window30, TimeSpan.FromSeconds(downtime30)),
+                LastOutageStartUtc = lastOutage?.StartedAt,
+                LastOutageEndUtc = lastOutageEndUtc
             });
         }
 
-        return result;
+        return new TargetDashboardListDto(totalCount, items);
     }
 
-    private (DateTime start, DateTime end) NormalizeRange(DateTime from, DateTime to)
+    private static IQueryable<MonitoringTarget> ApplySorting(IQueryable<MonitoringTarget> query, string? sorting)
     {
-        if (from == default)
+        if (string.IsNullOrWhiteSpace(sorting))
         {
-            from = Clock.Now.AddDays(-_options.Dashboard.DefaultRangeDays);
+            return query.OrderBy(target => target.Name);
         }
 
-        if (to == default)
-        {
-            to = Clock.Now;
-        }
+        var normalized = sorting.Trim().ToLowerInvariant();
 
-        if (to <= from)
+        return normalized switch
         {
-            throw new BusinessException("InvalidRange")
-                .WithData("from", from.ToString("O", CultureInfo.InvariantCulture))
-                .WithData("to", to.ToString("O", CultureInfo.InvariantCulture));
-        }
-
-        var maxRange = TimeSpan.FromDays(Math.Max(1, _options.Dashboard.MaxRangeDays));
-        if (to - from > maxRange)
-        {
-            to = from.Add(maxRange);
-        }
-
-        return (from, to);
+            "name desc" or "name descending" => query.OrderByDescending(target => target.Name),
+            "servicetype desc" or "servicetype descending" => query.OrderByDescending(target => target.Type),
+            "servicetype" or "servicetype asc" => query.OrderBy(target => target.Type),
+            "status desc" or "status descending" => query.OrderByDescending(target => target.CurrentStatus),
+            "status" or "status asc" => query.OrderBy(target => target.CurrentStatus),
+            _ => query.OrderBy(target => target.Name)
+        };
     }
 
-    private static TimeSpan ResolveBucketLength(string bucket)
+    private static ServiceStatus MapToServiceStatus(TargetStatusDto status)
     {
-        return bucket?.Equals("hour", StringComparison.OrdinalIgnoreCase) == true
-            ? TimeSpan.FromHours(1)
-            : TimeSpan.FromDays(1);
+        return status switch
+        {
+            TargetStatusDto.Online => ServiceStatus.Online,
+            TargetStatusDto.Offline => ServiceStatus.Offline,
+            _ => ServiceStatus.Checking
+        };
     }
 
-    private async Task<List<OutageWindow>> LoadOutagesAsync(List<Guid> targetIds, DateTime rangeStart, DateTime rangeEnd)
+    private static TargetStatusDto MapToDtoStatus(ServiceStatus status)
     {
-        if (targetIds.Count == 0)
+        return status switch
         {
-            return new List<OutageWindow>();
+            ServiceStatus.Online => TargetStatusDto.Online,
+            ServiceStatus.Offline => TargetStatusDto.Offline,
+            _ => TargetStatusDto.Checking
+        };
+    }
+
+    private static IEnumerable<double> CalculateIntervals(IReadOnlyList<OutageWindow> outages)
+    {
+        for (var i = 1; i < outages.Count; i++)
+        {
+            var previous = outages[i - 1];
+            var current = outages[i];
+            var interval = (current.StartedAt - previous.StartedAt).TotalHours;
+            if (interval > 0d)
+            {
+                yield return interval;
+            }
+        }
+    }
+
+    private static double SumDowntime(IEnumerable<OutageWindow> outages, DateTime windowStart, DateTime windowEnd, DateTime nowUtc)
+    {
+        double totalSeconds = 0d;
+        foreach (var outage in outages)
+        {
+            totalSeconds += DashboardMetricsHelper.OverlapUtc(outage.StartedAt, outage.EndedAt, windowStart, windowEnd, nowUtc).TotalSeconds;
         }
 
-        var outageQuery = await _outageRepository.GetQueryableAsync();
-        outageQuery = outageQuery
-            .Where(o => targetIds.Contains(o.TargetId))
-            .Where(o => o.StartedAt <= rangeEnd && (o.EndedAt == null || o.EndedAt >= rangeStart));
-
-        return await AsyncExecuter.ToListAsync(outageQuery);
+        return totalSeconds;
     }
 }
